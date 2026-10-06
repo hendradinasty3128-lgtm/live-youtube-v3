@@ -230,3 +230,144 @@ def stop_ffmpeg():
 
 
 def main():
+    st.set_page_config(page_title="YouTube Live Pro", page_icon="🎬", layout="wide")
+    st.title("🎬 YouTube Live Streaming Automation (Pro Version)")
+    st.markdown("---")
+
+    with st.sidebar:
+        st.header("🛠 Utilitas & Server")
+        if st.button("🧹 Bersihkan Cache Upload"):
+            for f in UPLOAD_DIR.glob("*"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+            st.success("Cache berhasil dibersihkan!")
+
+    mode = st.radio("Pilih Format Konten", ["Playlist 5 Video", "Video + MP3 Playlist"], horizontal=True)
+
+    selected_paths = []
+    audio_paths = []
+
+    if mode == "Playlist 5 Video":
+        st.subheader("📁 Manajemen Playlist Video")
+        for slot in range(1, 6):
+            with st.expander(f"Slot Video #{slot}", expanded=(slot == 1)):
+                source = st.radio(f"Sumber #{slot}", ["Upload Perangkat", "Link Langsung", "Google Drive"], horizontal=True, key=f"src_{slot}")
+                if source == "Upload Perangkat":
+                    up_f = st.file_uploader(f"File #{slot}", type=["mp4", "mkv", "mov", "webm"], key=f"up_{slot}")
+                    if up_f:
+                        st.session_state[f"path_{slot}"] = save_uploaded_file(up_f, slot)
+                elif source == "Link Langsung":
+                    link_v = st.text_input(f"URL #{slot}", key=f"url_{slot}")
+                    if st.button(f"Download Link #{slot}", key=f"btn_url_{slot}") and link_v:
+                        with st.spinner("Mengunduh..."):
+                            st.session_state[f"path_{slot}"] = download_video_from_url(link_v, slot)
+                else:
+                    g_v = st.text_input(f"Link Drive #{slot}", key=f"drive_{slot}")
+                    if st.button(f"Download Drive #{slot}", key=f"btn_drive_{slot}") and g_v:
+                        with st.spinner("Mengunduh Drive..."):
+                            st.session_state[f"path_{slot}"] = download_video_from_url(g_v, slot)
+
+            candidates = sorted(UPLOAD_DIR.glob(f"video_{slot}_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if candidates:
+                st.session_state[f"path_{slot}"] = str(candidates[0])
+            if st.session_state.get(f"path_{slot}") and Path(st.session_state[f"path_{slot}"]).exists():
+                selected_paths.append(st.session_state[f"path_{slot}"])
+    else:
+        st.subheader("🎵 Manajemen Background & MP3")
+        v_source = st.radio("Sumber Video Utama", ["Upload Perangkat", "Google Drive"], horizontal=True, key="bg_src")
+        video_saved = None
+        if v_source == "Upload Perangkat":
+            up_v = st.file_uploader("Upload Video", type=["mp4", "mkv", "mov"], key="bg_up")
+            if up_v:
+                video_saved = save_uploaded_file(up_v, 1)
+        else:
+            d_v = st.text_input("Link Drive Video Latar", key="bg_drive")
+            if st.button("Ambil Video") and d_v:
+                with st.spinner("Mengambil..."):
+                    video_saved = download_video_from_url(d_v, 1)
+
+        if video_saved:
+            selected_paths = [video_saved]
+        else:
+            candidates = sorted(UPLOAD_DIR.glob("video_1_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if candidates:
+                selected_paths = [str(candidates[0])]
+
+        st.markdown("---")
+        for slot in range(1, 6):
+            up_a = st.file_uploader(f"MP3 Slot #{slot}", type=["mp3"], key=f"mp3_{slot}")
+            if up_a:
+                save_uploaded_audio(up_a, slot)
+
+        for slot in range(1, 6):
+            candidates = sorted(UPLOAD_DIR.glob(f"audio_{slot}_*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if candidates:
+                audio_paths.append(str(candidates[0]))
+
+    st.markdown("---")
+    st.subheader("⚙️ Konfigurasi Siaran")
+    
+    col_k1, col_k2 = st.columns(2)
+    with col_k1:
+        stream_key = st.text_input("Stream Key YouTube", type="password")
+        video_quality = st.selectbox("Kualitas Resolusi", ["HD 720p (Ringan & Stabil)", "Full HD 1080p"])
+    with col_k2:
+        is_shorts = st.checkbox("Format YouTube Shorts (Vertikal)")
+        playback_mode = st.radio("Mode Putar", ["Tanpa Batas (Looping 24 Jam)", "Jumlah Pengulangan", "Jadwal Durasi (Jam)"])
+
+    repeat_count = 1
+    duration_hours = None
+    if playback_mode == "Jumlah Pengulangan":
+        repeat_count = st.number_input("Total Pengulangan", min_value=1, value=1)
+    elif playback_mode == "Jadwal Durasi (Jam)":
+        duration_hours = st.number_input("Durasi Otomatis (Jam)", min_value=0.1, value=2.0)
+
+    log_placeholder = st.empty()
+    logs = st.session_state.get("logs", [])
+
+    def log_callback(msg):
+        logs.append(msg)
+        st.session_state["logs"] = logs[-100:]
+        try:
+            log_placeholder.text("\n".join(st.session_state["logs"][-20:]))
+        except Exception:
+            print(msg)
+
+    streaming = FFMPEG_PROCESS is not None and FFMPEG_PROCESS.poll() is None
+
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("▶️ Mulai Siaran Live Streaming", disabled=streaming, use_container_width=True):
+            if not selected_paths:
+                st.error("Video belum siap!")
+            elif mode == "Video + MP3 Playlist" and not audio_paths:
+                st.error("MP3 belum diunggah!")
+            elif not stream_key:
+                st.error("Stream Key wajib diisi!")
+            else:
+                st.session_state["logs"] = []
+                thread = threading.Thread(
+                    target=run_ffmpeg,
+                    args=(mode, selected_paths, audio_paths, stream_key, is_shorts, playback_mode, int(repeat_count), duration_hours, video_quality, log_callback),
+                    daemon=True,
+                )
+                thread.start()
+                time.sleep(0.5)
+                st.success("Siaran dimulai!")
+
+    with col_btn2:
+        if st.button("⏹️ Hentikan Paksa Siaran", disabled=not streaming, use_container_width=True):
+            stop_ffmpeg()
+            st.warning("Siaran dihentikan.")
+
+    if streaming:
+        st.info("🔴 Status Live: Sedang mengudara...")
+
+    if st.session_state.get("logs"):
+        log_placeholder.text("\n".join(st.session_state["logs"][-20:]))
+
+
+if __name__ == '__main__':
+    main()
