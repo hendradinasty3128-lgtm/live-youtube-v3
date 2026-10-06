@@ -23,7 +23,6 @@ PROCESS_LOCK = threading.Lock()
 
 
 def safe_filename(name: str) -> str:
-    """Buat nama file aman untuk disimpan di server."""
     name = Path(name).name
     allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._- ()"
     cleaned = "".join(c if c in allowed else "_" for c in name).strip()
@@ -54,7 +53,7 @@ def download_video_from_url(url: str, slot: int, filename_hint: str = "") -> str
         try:
             import gdown
         except ImportError as exc:
-            raise RuntimeError("Library gdown belum terpasang. Tambahkan gdown di requirements.txt.") from exc
+            raise RuntimeError("Library gdown belum terpasang.") from exc
         hint = safe_filename(filename_hint or f"video_{slot}.mp4")
         if not Path(hint).suffix:
             hint += ".mp4"
@@ -135,7 +134,7 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
 
     if mode == "Video + MP3 Playlist":
         if not video_paths or not audio_paths:
-            log_callback("ERROR: Mode Video + MP3 membutuhkan video latar dan file MP3.")
+            log_callback("ERROR: Butuh video latar dan file MP3.")
             return
 
         if playback_mode == "Jumlah Pengulangan":
@@ -146,45 +145,22 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             audio_loop_args = ["-stream_loop", "-1"]
 
         cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel", "info",
-            "-thread_queue_size", "512",
-            "-re",
-            "-stream_loop", "-1",
-            "-i", video_paths[0],
-            "-thread_queue_size", "512",
-            "-re",
+            "ffmpeg", "-hide_banner", "-loglevel", "info",
+            "-thread_queue_size", "512", "-re", "-stream_loop", "-1",
+            "-i", video_paths[0], "-thread_queue_size", "512", "-re",
         ]
         cmd += audio_loop_args
         cmd += [
-            "-f", "concat",
-            "-safe", "0",
-            "-i", audio_playlist,
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "zerolatency",
-            "-r", "20",
-            "-pix_fmt", "yuv420p",
-            "-profile:v", "main",
-            "-threads", "2",
-            "-b:v", "2500k",
-            "-maxrate", "2500k",
-            "-bufsize", "3600k",
-            "-g", "50",
-            "-keyint_min", "50",
-            "-sc_threshold", "0",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-ar", "48000",
-            "-ac", "2",
-            "-af", "aresample=async=1:first_pts=0",
-            "-fps_mode", "cfr",
-            "-max_interleave_delta", "0",
-            "-avoid_negative_ts", "make_zero",
-            "-vf", scale_filter,
+            "-f", "concat", "-safe", "0", "-i", audio_playlist,
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-r", "20", "-pix_fmt", "yuv420p", "-profile:v", "main",
+            "-threads", "2", "-b:v", "2500k", "-maxrate", "2500k",
+            "-bufsize", "3600k", "-g", "50", "-keyint_min", "50",
+            "-sc_threshold", "0", "-c:a", "aac", "-b:a", "128k",
+            "-ar", "48000", "-ac", "2", "-af", "aresample=async=1:first_pts=0",
+            "-fps_mode", "cfr", "-max_interleave_delta", "0",
+            "-avoid_negative_ts", "make_zero", "-vf", scale_filter,
         ]
 
         if duration_seconds:
@@ -192,15 +168,8 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
         elif playback_mode == "Jumlah Pengulangan":
             cmd += ["-shortest"]
 
-        cmd += [
-            "-flvflags", "no_duration_filesize",
-            "-muxdelay", "0",
-            "-muxpreload", "0",
-            "-f", "flv",
-            output_url,
-        ]
-        log_callback("🚀 Memulai Streaming Mode: Video + MP3 (Professional)")
-
+        cmd += ["-flvflags", "no_duration_filesize", "-muxdelay", "0", "-muxpreload", "0", "-f", "flv", output_url]
+        log_callback("🚀 Memulai Streaming Mode: Video + MP3")
     else:
         if not video_paths:
             log_callback("ERROR: Minimal 1 video diperlukan.")
@@ -214,187 +183,67 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             cmd += ["-stream_loop", "-1"]
 
         cmd += [
-            "-f", "concat",
-            "-safe", "0",
-            "-i", playlist,
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "zerolatency",
-            "-r", "20",
-            "-pix_fmt", "yuv420p",
-            "-profile:v", "main",
-            "-threads", "2",
-            "-b:v", "2500k",
-            "-maxrate", "2500k",
-            "-bufsize", "3600k",
-            "-g", "50",
-            "-keyint_min", "50",
-            "-sc_threshold", "0",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-ar", "48000",
-            "-af", "aresample=async=1:first_pts=0",
-            "-fps_mode", "cfr",
-            "-vf", scale_filter,
+            "-f", "concat", "-safe", "0", "-i", playlist,
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-r", "20", "-pix_fmt", "yuv420p", "-profile:v", "main",
+            "-threads", "2", "-b:v", "2500k", "-maxrate", "2500k",
+            "-bufsize", "3600k", "-g", "50", "-keyint_min", "50",
+            "-sc_threshold", "0", "-c:a", "aac", "-b:a", "128k",
+            "-ar", "48000", "-af", "aresample=async=1:first_pts=0",
+            "-fps_mode", "cfr", "-vf", scale_filter,
         ]
 
         if duration_seconds:
             cmd += ["-t", str(duration_seconds)]
 
         cmd += ["-f", "flv", output_url]
-        log_callback("🚀 Memulai Streaming Mode: Playlist 5 Video (Professional)")
+        log_callback("🚀 Memulai Streaming Mode: Playlist 5 Video")
 
     try:
         with PROCESS_LOCK:
             FFMPEG_PROCESS = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
             )
-
         process = FFMPEG_PROCESS
         for line in process.stdout:
             line = line.strip()
             if line:
                 log_callback(line)
         process.wait()
-        log_callback(f"FFmpeg berhenti dengan kode: {process.returncode}")
-    except FileNotFoundError:
-        log_callback("ERROR: FFmpeg tidak ditemukan di server sistem.")
     except Exception as e:
         log_callback(f"Error: {e}")
     finally:
         with PROCESS_LOCK:
             FFMPEG_PROCESS = None
-        log_callback("Sesi penyiaran streaming telah berakhir.")
 
 
 def stop_ffmpeg():
     global FFMPEG_PROCESS
     with PROCESS_LOCK:
-        process = FFMPEG_PROCESS
-        if process and process.poll() is None:
+        if FFMPEG_PROCESS and FFMPEG_PROCESS.poll() is None:
             try:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+                FFMPEG_PROCESS.terminate()
+                FFMPEG_PROCESS.wait(timeout=5)
             except Exception:
                 pass
         FFMPEG_PROCESS = None
 
 
 def main():
-    st.set_page_config(
-        page_title="YouTube Live Pro Dashboard",
-        page_icon="🎬",
-        layout="wide"
-    )
-
+    st.set_page_config(page_title="YouTube Live Pro", page_icon="🎬", layout="wide")
     st.title("🎬 YouTube Live Streaming Automation (Pro Version)")
-    st.markdown("Panel kontrol profesional untuk siaran otomatis 24/10 dengan fitur manajemen playlist & **jadwal stop otomatis**.")
     st.markdown("---")
 
     with st.sidebar:
-        st.header("🛠️️ Utilitas & Server")
+        st.header("🛠 Utilitas & Server")
         if st.button("🧹 Bersihkan Cache Upload"):
             for f in UPLOAD_DIR.glob("*"):
                 try:
                     f.unlink()
                 except Exception:
                     pass
-            st.success("Folder penyimpanan server berhasil dibersihkan!")
-        st.markdown("---")
-        st.info("💡 **Tips Pro:** Gunakan resolusi 720p agar server gratisan Streamlit Cloud berjalan sangat stabil tanpa hambatan.")
+            st.success("Cache berhasil dibersihkan!")
 
-    mode = st.radio(
-        "Pilih Format Konten Siaran",
-        ["Playlist 5 Video", "Video + MP3 Playlist"],
-        horizontal=True,
-    )
+    mode = st.radio("Pilih Format Konten", ["Playlist 5 Video", "Video + MP3 Playlist"], horizontal=True)
 
-    selected_paths = []
-    audio_paths = []
-
-    if mode == "Playlist 5 Video":
-        st.subheader("📁 Manajemen Berkas Playlist Video (1 sampai 5)")
-        for slot in range(1, 6):
-            with st.expander(f"Slot Video #{slot}", expanded=(slot == 1)):
-                source = st.radio(
-                    f"Sumber Video #{slot}",
-                    ["Upload Perangkat", "Link Langsung", "Google Drive"],
-                    horizontal=True,
-                    key=f"src_{slot}",
-                )
-
-                if source == "Upload Perangkat":
-                    up_f = st.file_uploader(f"Pilih file MP4/MKV #{slot}", type=["mp4", "mkv", "mov", "webm"], key=f"up_{slot}")
-                    if up_f:
-                        saved = save_uploaded_file(up_f, slot)
-                        st.session_state[f"path_{slot}"] = saved
-                        st.success(f"Berhasil mengunggah: {up_f.name}")
-                elif source == "Link Langsung":
-                    link_v = st.text_input(f"URL File Video #{slot}", key=f"url_{slot}")
-                    if st.button(f"Proses Download Link #{slot}", key=f"btn_url_{slot}"):
-                        if link_v:
-                            with st.spinner("Mengunduh video ke server..."):
-                                saved = download_video_from_url(link_v, slot)
-                                st.session_state[f"path_{slot}"] = saved
-                                st.success("Download link sukses!")
-                else:
-                    g_v = st.text_input(f"Link Google Drive #{slot}", key=f"drive_{slot}")
-                    if st.button(f"Proses Download Drive #{slot}", key=f"btn_drive_{slot}"):
-                        if g_v:
-                            with st.spinner("Mengunduh dari Google Drive..."):
-                                saved = download_video_from_url(g_v, slot)
-                                st.session_state[f"path_{slot}"] = saved
-                                st.success("Download Google Drive sukses!")
-
-            candidates = sorted(UPLOAD_DIR.glob(f"video_{slot}_*"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if candidates:
-                st.session_state[f"path_{slot}"] = str(candidates[0])
-            if st.session_state.get(f"path_{slot}") and Path(st.session_state[f"path_{slot}"]).exists():
-                selected_paths.append(st.session_state[f"path_{slot}"])
-
-    else:
-        st.subheader("🎵 Manajemen Background Video & 5 File MP3")
-        v_source = st.radio("Sumber Video Utama (Latar)", ["Upload Perangkat", "Google Drive"], horizontal=True, key="bg_src")
-        video_saved = None
-        if v_source == "Upload Perangkat":
-            up_v = st.file_uploader("Upload Video Utama", type=["mp4", "mkv", "mov"], key="bg_up")
-            if up_v:
-                video_saved = save_uploaded_file(up_v, 1)
-        else:
-            d_v = st.text_input("Link Google Drive Video Latar", key="bg_drive")
-            if st.button("Ambil Video Latar"):
-                if d_v:
-                    with st.spinner("Mengunduh video latar..."):
-                        video_saved = download_video_from_url(d_v, 1)
-
-        if video_saved:
-            selected_paths = [video_saved]
-        else:
-            candidates = sorted(UPLOAD_DIR.glob("video_1_*"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if candidates:
-                selected_paths = [str(candidates[0])]
-
-        st.markdown("---")
-        st.markdown("**Upload Daftar File Audio MP3 (#1 sampai #5):**")
-        for slot in range(1, 6):
-            up_a = st.file_uploader(f"File MP3 Slot #{slot}", type=["mp3"], key=f"mp3_{slot}")
-            if up_a:
-                save_uploaded_audio(up_a, slot)
-
-        for slot in range(1, 6):
-            candidates = sorted(UPLOAD_DIR.glob(f"audio_{slot}_*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if candidates:
-                audio_paths.append(str(candidates[0]))
-
-    st.markdown("---")
-    st.subheader("⚙️ Konfigurasi Siaran & Jadwal Otomatis")
-    
-    col_k1, col_k2 = st.columns(2)
-    with col_k1:
+    selected_paths =
