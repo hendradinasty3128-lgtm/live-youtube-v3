@@ -254,7 +254,7 @@ def main():
     with st.sidebar:
         # Foto Profil & Branding Creator (bisa diganti URL foto kamu)
         st.markdown('<div class="profile-container">', unsafe_allow_html=True)
-        st.image("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=faces", width=80)
+        st.image("DINASTY.jpg.webp", width=80)
         st.markdown("### Hendra Waskita")
         st.markdown("<p style='font-size: 12px; opacity: 0.8;'>Created by Hendra Waskita</p>", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
