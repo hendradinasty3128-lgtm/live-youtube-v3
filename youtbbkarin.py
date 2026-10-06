@@ -138,6 +138,48 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
     duration_seconds = total_duration_seconds if total_duration_seconds and total_duration_seconds > 0 else None
 
     if is_shorts:
-        scale_filter = "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2"
+        scale_filter = (
+            "scale=720:1280:force_original_aspect_ratio=decrease,"
+            "pad=720:1280:(ow-iw)/2:(oh-ih)/2"
+        )
     else:
-        scale_filter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(
+        scale_filter = (
+            "scale=1280:720:force_original_aspect_ratio=decrease,"
+            "pad=1280:720:(ow-iw)/2:(oh-ih)/2"
+        )
+
+    if mode == "Video + MP3 Playlist":
+        if not video_paths or not audio_paths:
+            log_callback("ERROR: Butuh video latar dan file MP3.")
+            return
+
+        audio_playlist = make_audio_playlist(audio_paths, 1)
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "info",
+            "-thread_queue_size", "512", "-re", "-stream_loop", "-1",
+            "-i", video_paths[0], "-thread_queue_size", "512", "-re",
+            "-stream_loop", "-1",
+            "-f", "concat", "-safe", "0", "-i", audio_playlist,
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-r", "20", "-pix_fmt", "yuv420p", "-profile:v", "main",
+            "-threads", "2", "-b:v", "2500k", "-maxrate", "2500k",
+            "-bufsize", "3600k", "-g", "50", "-keyint_min", "50",
+            "-sc_threshold", "0", "-c:a", "aac", "-b:a", "128k",
+            "-ar", "48000", "-ac", "2", "-af", "aresample=async=1:first_pts=0",
+            "-fps_mode", "cfr", "-max_interleave_delta", "0",
+            "-avoid_negative_ts", "make_zero", "-vf", scale_filter,
+        ]
+
+        if duration_seconds:
+            cmd += ["-t", str(duration_seconds)]
+
+        cmd += ["-flvflags", "no_duration_filesize", "-muxdelay", "0", "-muxpreload", "0", "-f", "flv", output_url]
+        log_callback("🚀 Memulai Streaming Mode: Video + MP3 (Terjadwal)")
+    else:
+        if not video_paths:
+            log_callback("ERROR: Minimal 1 video diperlukan.")
+            return
+
+        playlist = make_concat_playlist(video_paths, 9999)
+        cmd
