@@ -227,7 +227,7 @@ def stop_ffmpeg():
 def main():
     st.set_page_config(page_title="Hendra Waskita - YouTube Live Streaming", page_icon="🎬", layout="wide")
 
-    # Custom CSS untuk styling admin panel ungu & kotak jam digital
+    # Custom CSS & Javascript Live Clock untuk Sidebar
     st.markdown("""
         <style>
         [data-testid="stSidebar"] {
@@ -253,235 +253,18 @@ def main():
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         </style>
-    """, unsafe_allow_html=True)
 
-    # Helper untuk format nama hari & bulan Indonesia
-    days_indo = {"Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu", "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu"}
-    months_indo = {1: "Januari", 2: "Februari", 3: "Maret", 4: "April", 5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus", 9: "September", 10: "Oktober", 11: "November", 12: "Desember"}
-    
-    tz_jakarta = pytz.timezone("Asia/Jakarta")
-    now_jakarta = datetime.now(tz_jakarta)
-    
-    day_name = days_indo.get(now_jakarta.strftime("%A"), now_jakarta.strftime("%A"))
-    formatted_date = f"{day_name}, {now_jakarta.day} {months_indo.get(now_jakarta.month, '')} {now_jakarta.year}"
-    formatted_time = now_jakarta.strftime("%H.%M.%S")
-
-    with st.sidebar:
-        st.markdown('<div class="profile-container">', unsafe_allow_html=True)
-        try:
-            st.image("DINASTY.jpg.webp", width=80)
-        except Exception:
-            st.image("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=faces", width=80)
-        st.markdown("### YouTube Live Streaming")
-        st.markdown("<p style='font-size: 14px; font-weight: bold; margin-bottom: 2px;'>By Hendra Waskita</p>", unsafe_allow_html=True)
-        st.markdown(f"<p style='font-size: 13px; opacity: 0.9; margin-bottom: 0;'>{formatted_date}</p>", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # Kotak Jam Digital WIB ala contoh
-        st.markdown(f"""
-            <div class="clock-box">
-                <span style="font-size: 22px; font-weight: bold; letter-spacing: 1px;">{formatted_time} WIB</span>
-            </div>
-        """, unsafe_allow_html=True)
-
-        menu = st.radio("Navigasi Menu", ["📊 Dashboard Utama", "🚀 Buat & Atur Live", "📁 Berkas Video", "⚙️ Pengaturan & Cache"])
-
-    if menu == "📊 Dashboard Utama":
-        st.title("📊 Panel Dashboard Live Streaming")
-        st.markdown("Halo, **Hendra Waskita!** Selamat datang kembali di panel kontrol streaming Anda.")
-        
-        col1, col2 = st.columns(2)
-        streaming = FFMPEG_PROCESS is not None and FFMPEG_PROCESS.poll() is None
-        
-        with col1:
-            st.metric(label="LIVE AKTIF", value="1" if streaming else "0")
-        with col2:
-            st.metric(label="STATUS SERVER", value="ONLINE (FFmpeg Ready)")
-
-        st.markdown("---")
-        st.subheader("🔴 Status Siaran Langsung Saat Ini")
-        
-        if streaming:
-            st.success("Status: AKTIF 🟢 (Sedang mengudara ke YouTube)")
-        else:
-            st.warning("Status: TIDAK AKTIF (Belum ada siaran yang berjalan)")
-
-        if st.session_state.get("logs"):
-            st.text_area("Live Terminal Logs:", "\n".join(st.session_state["logs"][-15:]), height=200)
-
-    elif menu == "🚀 Buat & Atur Live":
-        st.title("🚀 Buat & Kelola Siaran Live (Dengan Penjadwalan)")
-        st.markdown("---")
-
-        mode = st.radio("Pilih Format Konten", ["Playlist 5 Video", "Video + MP3 Playlist"], horizontal=True)
-
-        selected_paths = []
-        audio_paths = []
-
-        if mode == "Playlist 5 Video":
-            st.subheader("📁 Manajemen Playlist Video")
-            for slot in range(1, 6):
-                with st.expander(f"Slot Video #{slot}", expanded=(slot == 1)):
-                    source = st.radio(f"Sumber #{slot}", ["Upload Perangkat", "Link Langsung", "Google Drive"], horizontal=True, key=f"src_{slot}")
-                    if source == "Upload Perangkat":
-                        up_f = st.file_uploader(f"File #{slot}", type=["mp4", "mkv", "mov", "webm"], key=f"up_{slot}")
-                        if up_f:
-                            st.session_state[f"path_{slot}"] = save_uploaded_file(up_f, slot)
-                    elif source == "Link Langsung":
-                        link_v = st.text_input(f"URL #{slot}", key=f"url_{slot}")
-                        if st.button(f"Download Link #{slot}", key=f"btn_url_{slot}") and link_v:
-                            with st.spinner("Mengunduh..."):
-                                st.session_state[f"path_{slot}"] = download_video_from_url(link_v, slot)
-                    else:
-                        g_v = st.text_input(f"Link Drive #{slot}", key=f"drive_{slot}")
-                        if st.button(f"Download Drive #{slot}", key=f"btn_drive_{slot}") and g_v:
-                            with st.spinner("Mengunduh Drive..."):
-                                st.session_state[f"path_{slot}"] = download_video_from_url(g_v, slot)
-
-                candidates = sorted(UPLOAD_DIR.glob(f"video_{slot}_*"), key=lambda p: p.stat().st_mtime, reverse=True)
-                if candidates:
-                    st.session_state[f"path_{slot}"] = str(candidates[0])
-                if st.session_state.get(f"path_{slot}") and Path(st.session_state[f"path_{slot}"]).exists():
-                    selected_paths.append(st.session_state[f"path_{slot}"])
-        else:
-            st.subheader("🎵 Manajemen Background & MP3")
-            v_source = st.radio("Sumber Video Utama", ["Upload Perangkat", "Google Drive"], horizontal=True, key="bg_src")
-            video_saved = None
-            if v_source == "Upload Perangkat":
-                up_v = st.file_uploader("Upload Video", type=["mp4", "mkv", "mov"], key="bg_up")
-                if up_v:
-                    video_saved = save_uploaded_file(up_v, 1)
-            else:
-                d_v = st.text_input("Link Drive Video Latar", key="bg_drive")
-                if st.button("Ambil Video") and d_v:
-                    with st.spinner("Mengambil..."):
-                        video_saved = download_video_from_url(d_v, 1)
-
-            if video_saved:
-                selected_paths = [video_saved]
-            else:
-                candidates = sorted(UPLOAD_DIR.glob("video_1_*"), key=lambda p: p.stat().st_mtime, reverse=True)
-                if candidates:
-                    selected_paths = [str(candidates[0])]
-
-            st.markdown("---")
-            for slot in range(1, 6):
-                up_a = st.file_uploader(f"MP3 Slot #{slot}", type=["mp3"], key=f"mp3_{slot}")
-                if up_a:
-                    save_uploaded_audio(up_a, slot)
-
-            for slot in range(1, 6):
-                candidates = sorted(UPLOAD_DIR.glob(f"audio_{slot}_*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
-                if candidates:
-                    audio_paths.append(str(candidates[0]))
-
-        st.markdown("---")
-        st.subheader("⚙️ Konfigurasi Siaran & Penjadwalan")
-        
-        col_k1, col_k2 = st.columns(2)
-        with col_k1:
-            stream_key = st.text_input("Stream Key YouTube", type="password")
-            video_quality = st.selectbox("Kualitas Resolusi", ["HD 720p (Ringan & Stabil)", "Full HD 1080p"])
-        with col_k2:
-            is_shorts = st.checkbox("Format YouTube Shorts (Vertikal)")
-
-        st.markdown("---")
-        st.markdown("#### 🕒 Pengaturan Jadwal & Waktu (WIB)")
-        
-        col_j1, col_j2 = st.columns(2)
-        with col_j1:
-            sched_date = st.date_input("Tanggal Mulai", value=now_jakarta.date())
-        with col_j2:
-            sched_time = st.time_input("Jam Mulai", value=now_jakarta.time())
-        st.caption("⏰ Waktu akan disimpan dalam timezone: **Jakarta (Asia/Jakarta)**")
-
-        st.markdown("#### ⏹️ Auto Stop & Durasi Otomatis")
-        col_as1, col_as2 = st.columns(2)
-        with col_as1:
-            stop_hours = st.selectbox("Auto Stop: Pilih Jam", [0, 1, 2, 3, 4, 6, 8, 12, 24], index=0)
-        with col_as2:
-            stop_minutes = st.selectbox("Auto Stop: Pilih Menit", [0, 15, 30, 45], index=0)
-        st.caption("Atur durasi auto-stop (Jam dan Menit). Biarkan 0 jika ingin siaran berjalan terus tanpa henti.")
-
-        col_js1, col_js2 = st.columns(2)
-        with col_js1:
-            stop_date = st.date_input("Tanggal Stop (Opsi)", value=now_jakarta.date())
-        with col_js2:
-            stop_time = st.time_input("Jam Stop (Opsi)", value=now_jakarta.time())
-
-        repeat_schedule = st.selectbox("Pengulangan Jadwal:", ["Jadwal Manual", "Harian (Daily)", "Mingguan (Weekly)"])
-        st.caption("Pengulangan hanya tersedia jika Auto Stop atau Jadwal Stop diaktifkan.")
-
-        log_placeholder = st.empty()
-        logs = st.session_state.get("logs", [])
-
-        def log_callback(msg):
-            logs.append(msg)
-            st.session_state["logs"] = logs[-100:]
-            try:
-                log_placeholder.text("\n".join(st.session_state["logs"][-20:]))
-            except Exception:
-                print(msg)
-
-        streaming = FFMPEG_PROCESS is not None and FFMPEG_PROCESS.poll() is None
-
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            if st.button("▶️ Jadwalkan & Mulai Siaran", disabled=streaming, use_container_width=True):
-                if not selected_paths:
-                    st.error("Video belum siap!")
-                elif mode == "Video + MP3 Playlist" and not audio_paths:
-                    st.error("MP3 belum diunggah!")
-                elif not stream_key:
-                    st.error("Stream Key wajib diisi!")
-                else:
-                    target_start_dt = tz_jakarta.localize(datetime.combine(sched_date, sched_time))
-                    current_dt = datetime.now(tz_jakarta)
-                    start_delay = (target_start_dt - current_dt).total_seconds()
-                    start_delay_seconds = max(0, int(start_delay))
-
-                    total_duration_seconds = (stop_hours * 3600) + (stop_minutes * 60)
-
-                    st.session_state["logs"] = []
-                    thread = threading.Thread(
-                        target=run_ffmpeg,
-                        args=(mode, selected_paths, audio_paths, stream_key, is_shorts, None, 1, total_duration_seconds, start_delay_seconds, log_callback),
-                        daemon=True,
-                    )
-                    thread.start()
-                    time.sleep(0.5)
-                    st.success(f"Siaran berhasil dijadwalkan! Akan mulai dalam {start_delay_seconds} detik.")
-
-        with col_btn2:
-            if st.button("⏹️ Hentikan Paksa Siaran", disabled=not streaming, use_container_width=True):
-                stop_ffmpeg()
-                st.warning("Siaran dihentikan.")
-
-        if streaming:
-            st.info("🔴 Status Live: Sedang mengudara...")
-
-        if st.session_state.get("logs"):
-            log_placeholder.text("\n".join(st.session_state["logs"][-20:]))
-
-    elif menu == "📁 Berkas Video":
-        st.title("📁 Daftar Berkas Video & Audio Tersimpan")
-        files = list(UPLOAD_DIR.glob("*"))
-        if files:
-            for f in files:
-                st.write(f"- {f.name} ({f.stat().st_size // 1024 // 1024} MB)")
-        else:
-            st.info("Belum ada file yang diunggah.")
-
-    elif menu == "⚙️ Pengaturan & Cache":
-        st.title("⚙️ Pengaturan Sistem")
-        if st.button("🧹 Bersihkan Cache Upload"):
-            for f in UPLOAD_DIR.glob("*"):
-                try:
-                    f.unlink()
-                except Exception:
-                    pass
-            st.success("Cache berhasil dibersihkan!")
-
-
-if __name__ == '__main__':
-    main()
+        <script>
+        function updateClock() {
+            const now = new Date();
+            
+            // Konversi ke zona waktu Indonesia Barat (WIB / Asia/Jakarta)
+            const optionsTime = { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            const optionsDate = { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+            
+            let timeString = new Intl.DateTimeFormat('id-ID', optionsTime).format(now).replace(/:/g, '.');
+            let dateString = new Intl.DateTimeFormat('id-ID', optionsDate).format(now);
+            
+            // Update elemen HTML jika sudah termuat
+            const clockEl = document.getElementById('live-clock');
+            const dateEl = document.getElementById
