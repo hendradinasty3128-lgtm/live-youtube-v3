@@ -175,7 +175,7 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             log_callback("ERROR: Minimal 1 video diperlukan.")
             return
 
-        playlist = make_concat_playlist(video_paths, 9999) # Infinite loop for scheduled streaming
+        playlist = make_concat_playlist(video_paths, 9999)
         cmd = ["ffmpeg", "-hide_banner", "-re", "-stream_loop", "-1", "-f", "concat", "-safe", "0", "-i", playlist]
 
         cmd += [
@@ -227,7 +227,7 @@ def stop_ffmpeg():
 def main():
     st.set_page_config(page_title="Hendra Waskita - YouTube Live Streaming", page_icon="🎬", layout="wide")
 
-    # Custom CSS untuk styling admin panel ungu
+    # Custom CSS untuk styling admin panel ungu & kotak jam digital
     st.markdown("""
         <style>
         [data-testid="stSidebar"] {
@@ -243,24 +243,48 @@ def main():
             border-bottom: 1px solid rgba(255,255,255,0.2);
             margin-bottom: 15px;
         }
+        .clock-box {
+            background-color: rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 10px;
+            text-align: center;
+            margin-top: 10px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
         </style>
     """, unsafe_allow_html=True)
 
+    # Helper untuk format nama hari & bulan Indonesia
+    days_indo = {"Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu", "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu"}
+    months_indo = {1: "Januari", 2: "Februari", 3: "Maret", 4: "April", 5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus", 9: "September", 10: "Oktober", 11: "November", 12: "Desember"}
+    
+    tz_jakarta = pytz.timezone("Asia/Jakarta")
+    now_jakarta = datetime.now(tz_jakarta)
+    
+    day_name = days_indo.get(now_jakarta.strftime("%A"), now_jakarta.strftime("%A"))
+    formatted_date = f"{day_name}, {now_jakarta.day} {months_indo.get(now_jakarta.month, '')} {now_jakarta.year}"
+    formatted_time = now_jakarta.strftime("%H.%M.%S")
+
     with st.sidebar:
         st.markdown('<div class="profile-container">', unsafe_allow_html=True)
-        # Menampilkan foto profil Hendra Waskita dari file repository GitHub
         try:
             st.image("DINASTY.jpg.webp", width=80)
         except Exception:
             st.image("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=faces", width=80)
-        st.markdown("### Hendra Waskita")
-        st.markdown("<p style='font-size: 12px; opacity: 0.8;'>Created by Hendra Waskita</p>", unsafe_allow_html=True)
+        st.markdown("### YouTube Live Streaming")
+        st.markdown("<p style='font-size: 14px; font-weight: bold; margin-bottom: 2px;'>By Hendra Waskita</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='font-size: 13px; opacity: 0.9; margin-bottom: 0;'>{formatted_date}</p>", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        menu = st.radio("Navigasi Menu", ["📊 Dashboard Utama", "🚀 Buat & Atur Live", "📁 Berkas Video", "⚙️ Pengaturan & Cache"])
+        # Kotak Jam Digital WIB ala contoh
+        st.markdown(f"""
+            <div class="clock-box">
+                <span style="font-size: 22px; font-weight: bold; letter-spacing: 1px;">{formatted_time} WIB</span>
+            </div>
+        """, unsafe_allow_html=True)
 
-    tz_jakarta = pytz.timezone("Asia/Jakarta")
-    now_jakarta = datetime.now(tz_jakarta)
+        menu = st.radio("Navigasi Menu", ["📊 Dashboard Utama", "🚀 Buat & Atur Live", "📁 Berkas Video", "⚙️ Pengaturan & Cache"])
 
     if menu == "📊 Dashboard Utama":
         st.title("📊 Panel Dashboard Live Streaming")
@@ -364,7 +388,6 @@ def main():
         st.markdown("---")
         st.markdown("#### 🕒 Pengaturan Jadwal & Waktu (WIB)")
         
-        # Form Jadwal Mulai
         col_j1, col_j2 = st.columns(2)
         with col_j1:
             sched_date = st.date_input("Tanggal Mulai", value=now_jakarta.date())
@@ -372,7 +395,6 @@ def main():
             sched_time = st.time_input("Jam Mulai", value=now_jakarta.time())
         st.caption("⏰ Waktu akan disimpan dalam timezone: **Jakarta (Asia/Jakarta)**")
 
-        # Form Auto Stop & Durasi
         st.markdown("#### ⏹️ Auto Stop & Durasi Otomatis")
         col_as1, col_as2 = st.columns(2)
         with col_as1:
@@ -381,14 +403,12 @@ def main():
             stop_minutes = st.selectbox("Auto Stop: Pilih Menit", [0, 15, 30, 45], index=0)
         st.caption("Atur durasi auto-stop (Jam dan Menit). Biarkan 0 jika ingin siaran berjalan terus tanpa henti.")
 
-        # Jadwal Stop Opsional
         col_js1, col_js2 = st.columns(2)
         with col_js1:
             stop_date = st.date_input("Tanggal Stop (Opsi)", value=now_jakarta.date())
         with col_js2:
             stop_time = st.time_input("Jam Stop (Opsi)", value=now_jakarta.time())
 
-        # Pengulangan Jadwal
         repeat_schedule = st.selectbox("Pengulangan Jadwal:", ["Jadwal Manual", "Harian (Daily)", "Mingguan (Weekly)"])
         st.caption("Pengulangan hanya tersedia jika Auto Stop atau Jadwal Stop diaktifkan.")
 
@@ -415,13 +435,11 @@ def main():
                 elif not stream_key:
                     st.error("Stream Key wajib diisi!")
                 else:
-                    # Hitung waktu delay mulai
                     target_start_dt = tz_jakarta.localize(datetime.combine(sched_date, sched_time))
                     current_dt = datetime.now(tz_jakarta)
                     start_delay = (target_start_dt - current_dt).total_seconds()
                     start_delay_seconds = max(0, int(start_delay))
 
-                    # Hitung durasi total dalam detik
                     total_duration_seconds = (stop_hours * 3600) + (stop_minutes * 60)
 
                     st.session_state["logs"] = []
@@ -447,7 +465,6 @@ def main():
 
     elif menu == "📁 Berkas Video":
         st.title("📁 Daftar Berkas Video & Audio Tersimpan")
-        st.markdown("Berikut adalah file-file yang tersimpan di server direktori upload Anda:")
         files = list(UPLOAD_DIR.glob("*"))
         if files:
             for f in files:
