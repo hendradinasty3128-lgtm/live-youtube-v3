@@ -14,12 +14,10 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "streamlit"])
     import streamlit as st
 
-
 APP_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = APP_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Dipakai agar tombol Stop bisa menghentikan proses FFmpeg yang sedang aktif.
 FFMPEG_PROCESS = None
 PROCESS_LOCK = threading.Lock()
 
@@ -33,7 +31,6 @@ def safe_filename(name: str) -> str:
 
 
 def save_uploaded_file(uploaded_file, slot: int) -> str:
-    """Simpan upload ke folder uploads dengan nama slot agar urutannya jelas."""
     original = safe_filename(uploaded_file.name)
     stem = Path(original).stem
     suffix = Path(original).suffix.lower()
@@ -45,7 +42,6 @@ def save_uploaded_file(uploaded_file, slot: int) -> str:
 
 
 def download_video_from_url(url: str, slot: int, filename_hint: str = "") -> str:
-    """Download video dari URL langsung atau Google Drive ke server."""
     url = url.strip()
     if not url:
         raise ValueError("Link video kosong.")
@@ -54,7 +50,6 @@ def download_video_from_url(url: str, slot: int, filename_hint: str = "") -> str
     if parsed.scheme not in ("http", "https"):
         raise ValueError("Link harus diawali http:// atau https://")
 
-    # Google Drive: gunakan gdown agar link sharing file dapat diunduh.
     if "drive.google.com" in parsed.netloc or "docs.google.com" in parsed.netloc:
         try:
             import gdown
@@ -69,7 +64,6 @@ def download_video_from_url(url: str, slot: int, filename_hint: str = "") -> str
             raise RuntimeError("Google Drive gagal diunduh. Pastikan file disetel 'Anyone with the link'.")
         return str(target)
 
-    # URL file langsung (MP4/MKV/WebM, dll).
     hint = filename_hint.strip()
     if not hint:
         name = Path(urllib.parse.unquote(parsed.path)).name
@@ -93,7 +87,6 @@ def download_video_from_url(url: str, slot: int, filename_hint: str = "") -> str
 
 
 def save_uploaded_audio(uploaded_file, slot: int) -> str:
-    """Simpan MP3 berdasarkan slot agar urutan playlist selalu 1 -> 5."""
     original = safe_filename(uploaded_file.name)
     stem = Path(original).stem
     suffix = Path(original).suffix.lower()
@@ -104,9 +97,7 @@ def save_uploaded_audio(uploaded_file, slot: int) -> str:
     return str(path)
 
 
-
 def make_concat_playlist(video_paths, repeat_count=1):
-    """Buat playlist FFmpeg Video 1 -> 5, dengan jumlah putaran eksplisit."""
     playlist = UPLOAD_DIR / "playlist.txt"
     repeat_count = max(1, int(repeat_count))
     with open(playlist, "w", encoding="utf-8") as f:
@@ -118,7 +109,6 @@ def make_concat_playlist(video_paths, repeat_count=1):
 
 
 def make_audio_playlist(audio_paths, repeat_count=1):
-    """Buat playlist audio yang diulang secara eksplisit agar jumlah putaran pasti."""
     playlist = UPLOAD_DIR / "audio_playlist.txt"
     repeat_count = max(1, int(repeat_count))
     with open(playlist, "w", encoding="utf-8") as f:
@@ -129,21 +119,26 @@ def make_audio_playlist(audio_paths, repeat_count=1):
     return str(playlist)
 
 
-def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_mode, repeat_count, duration_hours, log_callback):
+def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_mode, repeat_count, duration_hours, video_quality, log_callback):
     global FFMPEG_PROCESS
 
     output_url = f"rtmp://a.rtmp.youtube.com/live2/{stream_key}"
-    duration_seconds = int(duration_hours * 3600) if playback_mode == "Durasi streaming" and duration_hours else None
+    duration_seconds = int(duration_hours * 3600) if playback_mode == "Jadwal Durasi (Jam)" and duration_hours else None
 
-    if mode == "Video + MP3":
+    if is_shorts:
+        scale_filter = "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2"
+    else:
+        if video_quality == "HD 720p (Ringan & Stabil)":
+            scale_filter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
+        else:
+            scale_filter = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+
+    if mode == "Video + MP3 Playlist":
         if not video_paths or not audio_paths:
-            log_callback("ERROR: Mode Video + MP3 membutuhkan 1 video dan minimal 1 MP3.")
+            log_callback("ERROR: Mode Video + MP3 membutuhkan video latar dan file MP3.")
             return
 
-        # Penting: audio sebelumnya dibaca terlalu cepat oleh FFmpeg karena hanya
-        # input video yang memakai -re. Ini bisa membuat antrean audio membesar
-        # dan live YouTube tersendat/putus. Sekarang kedua input dibaca realtime.
-        if playback_mode == "Jumlah pengulangan":
+        if playback_mode == "Jumlah Pengulangan":
             audio_playlist = make_audio_playlist(audio_paths, repeat_count)
             audio_loop_args = []
         else:
@@ -154,11 +149,11 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             "ffmpeg",
             "-hide_banner",
             "-loglevel", "info",
-            "-thread_queue_size", "256",
+            "-thread_queue_size", "512",
             "-re",
             "-stream_loop", "-1",
             "-i", video_paths[0],
-            "-thread_queue_size", "256",
+            "-thread_queue_size", "512",
             "-re",
         ]
         cmd += audio_loop_args
@@ -189,25 +184,12 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             "-fps_mode", "cfr",
             "-max_interleave_delta", "0",
             "-avoid_negative_ts", "make_zero",
+            "-vf", scale_filter,
         ]
-
-        if is_shorts:
-            cmd += [
-                "-vf",
-                "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
-            ]
-        else:
-            # Target video landscape hingga 1080p dengan 20fps dan preset ultrafast agar CPU tetap serendah mungkin.
-            cmd += [
-                "-vf",
-                "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-            ]
 
         if duration_seconds:
             cmd += ["-t", str(duration_seconds)]
-        elif playback_mode == "Jumlah pengulangan":
-            # Video di-loop, tetapi output wajib berhenti tepat setelah playlist
-            # MP3 selesai sesuai jumlah pengulangan.
+        elif playback_mode == "Jumlah Pengulangan":
             cmd += ["-shortest"]
 
         cmd += [
@@ -217,37 +199,18 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             "-f", "flv",
             output_url,
         ]
-
-        log_callback("Mode: Video + MP3 — mode audio realtime")
-        log_callback(f"Video loop: {Path(video_paths[0]).name}")
-        log_callback("Urutan MP3:")
-        for i, path in enumerate(audio_paths, 1):
-            log_callback(f"  {i}. {Path(path).name}")
-        log_callback("Audio dibaca realtime (-re) agar antrean tidak menumpuk.")
-        if playback_mode == "Jumlah pengulangan":
-            log_callback(f"Playlist MP3 diputar tepat {repeat_count} kali, lalu streaming berhenti.")
-        elif playback_mode == "Durasi streaming":
-            log_callback(f"Streaming dibatasi {duration_hours:g} jam.")
-        else:
-            log_callback("MP3: 1 → 2 → 3 → 4 → 5 → kembali ke 1, loop terus.")
-        log_callback("Video di-loop terus; audio asli video tidak digunakan.")
-        log_callback("Menjalankan FFmpeg ke YouTube...")
+        log_callback("🚀 Memulai Streaming Mode: Video + MP3 (Professional)")
 
     else:
         if not video_paths:
             log_callback("ERROR: Minimal 1 video diperlukan.")
             return
 
-        # Jumlah pengulangan dibuat eksplisit di file concat agar putarannya pasti.
-        playlist_repeat = repeat_count if playback_mode == "Jumlah pengulangan" else 1
+        playlist_repeat = repeat_count if playback_mode == "Jumlah Pengulangan" else 1
         playlist = make_concat_playlist(video_paths, playlist_repeat)
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-re",
-        ]
+        cmd = ["ffmpeg", "-hide_banner", "-re"]
 
-        if playback_mode == "Tanpa batas":
+        if playback_mode == "Tanpa Batas (Looping 24 Jam)":
             cmd += ["-stream_loop", "-1"]
 
         cmd += [
@@ -272,31 +235,14 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             "-ar", "48000",
             "-af", "aresample=async=1:first_pts=0",
             "-fps_mode", "cfr",
+            "-vf", scale_filter,
         ]
-
-        if is_shorts:
-            cmd += [
-                "-vf",
-                "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
-            ]
 
         if duration_seconds:
             cmd += ["-t", str(duration_seconds)]
 
         cmd += ["-f", "flv", output_url]
-
-        log_callback("Mode: 5 Video Playlist")
-        log_callback("Urutan video:")
-        for i, path in enumerate(video_paths, 1):
-            log_callback(f"  {i}. {Path(path).name}")
-        log_callback("Playlist: Video 1 → Video 2 → Video 3 → Video 4 → Video 5")
-        if playback_mode == "Tanpa batas":
-            log_callback("Playlist video akan loop terus.")
-        elif playback_mode == "Jumlah pengulangan":
-            log_callback(f"Playlist 5 Video diputar tepat {repeat_count} kali, lalu streaming berhenti.")
-        elif playback_mode == "Durasi streaming":
-            log_callback(f"Streaming dibatasi {duration_hours:g} jam.")
-        log_callback("Menjalankan FFmpeg ke YouTube...")
+        log_callback("🚀 Memulai Streaming Mode: Playlist 5 Video (Professional)")
 
     try:
         with PROCESS_LOCK:
@@ -316,13 +262,14 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
         process.wait()
         log_callback(f"FFmpeg berhenti dengan kode: {process.returncode}")
     except FileNotFoundError:
-        log_callback("ERROR: FFmpeg tidak ditemukan. Pastikan FFmpeg sudah terpasang dan tersedia di PATH.")
+        log_callback("ERROR: FFmpeg tidak ditemukan di server sistem.")
     except Exception as e:
         log_callback(f"Error: {e}")
     finally:
         with PROCESS_LOCK:
             FFMPEG_PROCESS = None
-        log_callback("Streaming selesai atau dihentikan.")
+        log_callback("Sesi penyiaran streaming telah berakhir.")
+
 
 def stop_ffmpeg():
     global FFMPEG_PROCESS
@@ -342,301 +289,112 @@ def stop_ffmpeg():
 
 def main():
     st.set_page_config(
-        page_title="YouTube Live Streaming",
-        page_icon="🎥",
+        page_title="YouTube Live Pro Dashboard",
+        page_icon="🎬",
         layout="wide"
     )
-    st.title("Live Streaming YouTube")
 
-    # Blok iklan lama yang memakai components.html sengaja dihapus karena API tersebut deprecated.
+    st.title("🎬 YouTube Live Streaming Automation (Pro Version)")
+    st.markdown("Panel kontrol profesional untuk siaran otomatis 24/10 dengan fitur manajemen playlist & **jadwal stop otomatis**.")
+    st.markdown("---")
+
+    with st.sidebar:
+        st.header("🛠️️ Utilitas & Server")
+        if st.button("🧹 Bersihkan Cache Upload"):
+            for f in UPLOAD_DIR.glob("*"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+            st.success("Folder penyimpanan server berhasil dibersihkan!")
+        st.markdown("---")
+        st.info("💡 **Tips Pro:** Gunakan resolusi 720p agar server gratisan Streamlit Cloud berjalan sangat stabil tanpa hambatan.")
 
     mode = st.radio(
-        "Pilih Mode Streaming",
-        ["5 Video Playlist", "Video + MP3"],
+        "Pilih Format Konten Siaran",
+        ["Playlist 5 Video", "Video + MP3 Playlist"],
         horizontal=True,
     )
 
     selected_paths = []
     audio_paths = []
 
-    if mode == "5 Video Playlist":
-        st.subheader("Upload Playlist — 5 Video")
-        st.caption("Video akan dimainkan sesuai urutan: Video 1 → Video 2 → Video 3 → Video 4 → Video 5.")
-        st.info("Setiap slot bisa menggunakan Upload, Link langsung, atau Google Drive. Video dari Link/Drive diunduh langsung ke server sehingga tidak perlu upload melalui browser.")
-
+    if mode == "Playlist 5 Video":
+        st.subheader("📁 Manajemen Berkas Playlist Video (1 sampai 5)")
         for slot in range(1, 6):
-            st.markdown(f"### Video {slot}")
-            source = st.radio(
-                f"Sumber Video {slot}",
-                ["Upload dari perangkat", "Link langsung", "Google Drive"],
-                horizontal=True,
-                key=f"playlist_video_source_{slot}",
-            )
+            with st.expander(f"Slot Video #{slot}", expanded=(slot == 1)):
+                source = st.radio(
+                    f"Sumber Video #{slot}",
+                    ["Upload Perangkat", "Link Langsung", "Google Drive"],
+                    horizontal=True,
+                    key=f"src_{slot}",
+                )
 
-            if source == "Upload dari perangkat":
-                uploaded_file = st.file_uploader(
-                    f"Upload Video {slot}",
-                    type=["mp4", "flv", "mov", "mkv", "webm"],
-                    key=f"video_uploader_{slot}",
-                    help=f"Video ke-{slot} dalam urutan playlist."
-                )
-                if uploaded_file is not None:
-                    saved = save_uploaded_file(uploaded_file, slot)
-                    st.session_state[f"playlist_video_path_{slot}"] = saved
-                    st.success(f"Video {slot} siap: {uploaded_file.name}")
-
-            elif source == "Link langsung":
-                video_url = st.text_input(
-                    f"URL Video {slot}",
-                    placeholder="https://contoh.com/video.mp4",
-                    key=f"playlist_video_url_{slot}",
-                    help="Gunakan direct link yang bisa diakses tanpa login dan mengarah ke file video."
-                )
-                link_name = st.text_input(
-                    "Nama file (opsional)",
-                    placeholder=f"video_{slot}.mp4",
-                    key=f"playlist_video_name_{slot}",
-                )
-                if st.button(f"⬇️ Ambil Video {slot} dari Link", key=f"playlist_download_link_{slot}", use_container_width=True):
-                    if not video_url.strip():
-                        st.error(f"Masukkan URL Video {slot} terlebih dahulu.")
-                    else:
-                        try:
-                            with st.spinner(f"Mengunduh Video {slot} ke server..."):
-                                saved = download_video_from_url(video_url, slot, link_name)
-                            st.session_state[f"playlist_video_path_{slot}"] = saved
-                            st.success(f"Video {slot} siap: {Path(saved).name}")
-                        except Exception as e:
-                            st.error(f"Gagal mengambil Video {slot}: {e}")
-
-            else:
-                drive_url = st.text_input(
-                    f"Link Google Drive Video {slot}",
-                    placeholder="https://drive.google.com/file/d/.../view?usp=sharing",
-                    key=f"playlist_video_drive_url_{slot}",
-                    help="File Google Drive harus dapat diakses dengan 'Anyone with the link'."
-                )
-                drive_name = st.text_input(
-                    "Nama file (opsional)",
-                    placeholder=f"video_{slot}.mp4",
-                    key=f"playlist_video_drive_name_{slot}",
-                )
-                if st.button(f"☁️ Ambil Video {slot} dari Google Drive", key=f"playlist_download_drive_{slot}", use_container_width=True):
-                    if not drive_url.strip():
-                        st.error(f"Masukkan link Google Drive Video {slot} terlebih dahulu.")
-                    else:
-                        try:
-                            with st.spinner(f"Mengunduh Video {slot} dari Google Drive ke server..."):
-                                saved = download_video_from_url(drive_url, slot, drive_name)
-                            st.session_state[f"playlist_video_path_{slot}"] = saved
-                            st.success(f"Video {slot} siap: {Path(saved).name}")
-                        except Exception as e:
-                            st.error(f"Gagal mengambil Video {slot} dari Google Drive: {e}")
+                if source == "Upload Perangkat":
+                    up_f = st.file_uploader(f"Pilih file MP4/MKV #{slot}", type=["mp4", "mkv", "mov", "webm"], key=f"up_{slot}")
+                    if up_f:
+                        saved = save_uploaded_file(up_f, slot)
+                        st.session_state[f"path_{slot}"] = saved
+                        st.success(f"Berhasil mengunggah: {up_f.name}")
+                elif source == "Link Langsung":
+                    link_v = st.text_input(f"URL File Video #{slot}", key=f"url_{slot}")
+                    if st.button(f"Proses Download Link #{slot}", key=f"btn_url_{slot}"):
+                        if link_v:
+                            with st.spinner("Mengunduh video ke server..."):
+                                saved = download_video_from_url(link_v, slot)
+                                st.session_state[f"path_{slot}"] = saved
+                                st.success("Download link sukses!")
+                else:
+                    g_v = st.text_input(f"Link Google Drive #{slot}", key=f"drive_{slot}")
+                    if st.button(f"Proses Download Drive #{slot}", key=f"btn_drive_{slot}"):
+                        if g_v:
+                            with st.spinner("Mengunduh dari Google Drive..."):
+                                saved = download_video_from_url(g_v, slot)
+                                st.session_state[f"path_{slot}"] = saved
+                                st.success("Download Google Drive sukses!")
 
             candidates = sorted(UPLOAD_DIR.glob(f"video_{slot}_*"), key=lambda p: p.stat().st_mtime, reverse=True)
             if candidates:
-                st.session_state[f"playlist_video_path_{slot}"] = str(candidates[0])
-            selected = st.session_state.get(f"playlist_video_path_{slot}")
-            if selected and Path(selected).exists():
-                selected_paths.append(selected)
-                st.caption(f"Aktif: {Path(selected).name}")
-
-        if selected_paths:
-            st.write("**Playlist aktif:**")
-            for i, path in enumerate(selected_paths, 1):
-                st.write(f"{i}. {Path(path).name}")
-        else:
-            st.info("Belum ada video. Tambahkan minimal 1 video untuk memulai streaming.")
+                st.session_state[f"path_{slot}"] = str(candidates[0])
+            if st.session_state.get(f"path_{slot}") and Path(st.session_state[f"path_{slot}"]).exists():
+                selected_paths.append(st.session_state[f"path_{slot}"])
 
     else:
-        st.subheader("Upload Video + MP3 — Playlist 5 MP3")
-        st.caption("1 video di-loop terus + MP3 1 → 2 → 3 → 4 → 5. Mode hemat CPU untuk Streamlit Cloud: encoding 1080p/20fps, preset ultrafast, dan bitrate CPU-efisien.")
-        st.info("Tips: gunakan MP4 H.264 + AAC dan MP3 bitrate normal (128–320 kbps) agar perpindahan audio lebih lancar.")
-
+        st.subheader("🎵 Manajemen Background Video & 5 File MP3")
+        v_source = st.radio("Sumber Video Utama (Latar)", ["Upload Perangkat", "Google Drive"], horizontal=True, key="bg_src")
         video_saved = None
-        video_source = st.radio(
-            "Sumber Video Background",
-            ["Upload dari perangkat", "Link langsung", "Google Drive"],
-            horizontal=True,
-            key="video_source_mode",
-            help="Link/Drive diunduh langsung ke server sehingga tidak perlu upload ulang lewat browser.",
-        )
-
-        if video_source == "Upload dari perangkat":
-            uploaded_video = st.file_uploader(
-                "Video Background",
-                type=["mp4", "flv", "mov", "mkv", "webm"],
-                key="single_video_uploader",
-                help="Video yang akan di-loop terus selama playlist MP3 berjalan.",
-            )
-            if uploaded_video is not None:
-                video_saved = save_uploaded_file(uploaded_video, 1)
-                st.success(f"Video siap: {uploaded_video.name}")
-
-        elif video_source == "Link langsung":
-            video_url = st.text_input(
-                "URL Video",
-                placeholder="https://contoh.com/video.mp4",
-                key="video_direct_url",
-                help="Gunakan direct link yang bisa diakses tanpa login dan mengarah langsung ke file video.",
-            )
-            link_name = st.text_input(
-                "Nama file (opsional)",
-                placeholder="video.mp4",
-                key="video_direct_name",
-            )
-            if st.button("⬇️ Ambil Video dari Link", key="download_video_link", use_container_width=True):
-                if not video_url.strip():
-                    st.error("Masukkan URL video terlebih dahulu.")
-                else:
-                    try:
-                        with st.spinner("Mengunduh video ke server..."):
-                            video_saved = download_video_from_url(video_url, 1, link_name)
-                        st.session_state["remote_video_path"] = video_saved
-                        st.success(f"Video siap: {Path(video_saved).name}")
-                    except Exception as e:
-                        st.error(f"Gagal mengambil video: {e}")
-            video_saved = st.session_state.get("remote_video_path")
-
+        if v_source == "Upload Perangkat":
+            up_v = st.file_uploader("Upload Video Utama", type=["mp4", "mkv", "mov"], key="bg_up")
+            if up_v:
+                video_saved = save_uploaded_file(up_v, 1)
         else:
-            drive_url = st.text_input(
-                "Link Google Drive",
-                placeholder="https://drive.google.com/file/d/.../view?usp=sharing",
-                key="video_drive_url",
-                help="File harus bisa diakses dengan 'Anyone with the link'.",
-            )
-            drive_name = st.text_input(
-                "Nama file (opsional)",
-                placeholder="video.mp4",
-                key="video_drive_name",
-            )
-            if st.button("☁️ Ambil Video dari Google Drive", key="download_video_drive", use_container_width=True):
-                if not drive_url.strip():
-                    st.error("Masukkan link Google Drive terlebih dahulu.")
-                else:
-                    try:
-                        with st.spinner("Mengunduh video dari Google Drive ke server..."):
-                            video_saved = download_video_from_url(drive_url, 1, drive_name)
-                        st.session_state["remote_video_path"] = video_saved
-                        st.success(f"Video siap: {Path(video_saved).name}")
-                    except Exception as e:
-                        st.error(f"Gagal mengambil video dari Google Drive: {e}")
-            video_saved = st.session_state.get("remote_video_path")
-
-        for slot in range(1, 6):
-            uploaded_audio = st.file_uploader(
-                f"MP3 {slot}",
-                type=["mp3"],
-                key=f"mp3_uploader_{slot}",
-                help=f"MP3 ke-{slot}. Setelah MP3 {slot} selesai, lanjut ke MP3 berikutnya.",
-            )
-            if uploaded_audio is not None:
-                audio_saved = save_uploaded_audio(uploaded_audio, slot)
-                st.success(f"MP3 {slot} siap: {uploaded_audio.name}")
+            d_v = st.text_input("Link Google Drive Video Latar", key="bg_drive")
+            if st.button("Ambil Video Latar"):
+                if d_v:
+                    with st.spinner("Mengunduh video latar..."):
+                        video_saved = download_video_from_url(d_v, 1)
 
         if video_saved:
             selected_paths = [video_saved]
         else:
-            candidates = sorted(
-                UPLOAD_DIR.glob("video_1_*"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
+            candidates = sorted(UPLOAD_DIR.glob("video_1_*"), key=lambda p: p.stat().st_mtime, reverse=True)
             if candidates:
                 selected_paths = [str(candidates[0])]
 
+        st.markdown("---")
+        st.markdown("**Upload Daftar File Audio MP3 (#1 sampai #5):**")
         for slot in range(1, 6):
-            candidates = sorted(
-                UPLOAD_DIR.glob(f"audio_{slot}_*.mp3"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
+            up_a = st.file_uploader(f"File MP3 Slot #{slot}", type=["mp3"], key=f"mp3_{slot}")
+            if up_a:
+                save_uploaded_audio(up_a, slot)
+
+        for slot in range(1, 6):
+            candidates = sorted(UPLOAD_DIR.glob(f"audio_{slot}_*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
             if candidates:
                 audio_paths.append(str(candidates[0]))
 
-        if selected_paths:
-            st.write(f"**Video:** {Path(selected_paths[0]).name}")
-        if audio_paths:
-            st.write("**Playlist MP3 aktif:**")
-            for i, path in enumerate(audio_paths, 1):
-                st.write(f"{i}. {Path(path).name}")
-
-    stream_key = st.text_input("Stream Key YouTube", type="password")
-    is_shorts = st.checkbox("Mode Shorts (720x1280)")
-
-    st.subheader("Pengaturan Durasi Streaming")
-    playback_mode = st.radio(
-        "Jalankan streaming",
-        ["Tanpa batas", "Jumlah pengulangan", "Durasi streaming"],
-        horizontal=True,
-        help="Tanpa batas = loop terus. Jumlah pengulangan = jumlah putaran playlist. Durasi streaming = berhenti otomatis setelah waktu yang dipilih.",
-    )
-
-    repeat_count = 1
-    duration_hours = None
-    if playback_mode == "Jumlah pengulangan":
-        repeat_count = st.number_input(
-            "Jumlah pengulangan playlist",
-            min_value=1,
-            max_value=100000,
-            value=1,
-            step=1,
-            help="1 = satu kali, 2 = dua kali, dst. Pada Mode Video + MP3, yang diulang adalah urutan MP3.",
-        )
-    elif playback_mode == "Durasi streaming":
-        duration_hours = st.number_input(
-            "Durasi streaming (jam)",
-            min_value=0.01,
-            max_value=720.0,
-            value=1.0,
-            step=0.5,
-            help="Streaming akan dihentikan otomatis setelah durasi ini.",
-        )
-
-    log_placeholder = st.empty()
-    logs = st.session_state.get("logs", [])
-
-    def log_callback(msg):
-        logs.append(msg)
-        st.session_state["logs"] = logs[-100:]
-        try:
-            log_placeholder.text("\n".join(st.session_state["logs"][-20:]))
-        except Exception:
-            print(msg)
-
-    streaming = FFMPEG_PROCESS is not None and FFMPEG_PROCESS.poll() is None
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("▶️ Mulai Streaming", disabled=streaming, use_container_width=True):
-            if not selected_paths:
-                st.error("Upload video terlebih dahulu!")
-            elif mode == "Video + MP3" and not audio_paths:
-                st.error("Upload minimal 1 file MP3 terlebih dahulu!")
-            elif not stream_key:
-                st.error("Stream Key YouTube harus diisi!")
-            else:
-                st.session_state["logs"] = []
-                thread = threading.Thread(
-                    target=run_ffmpeg,
-                    args=(mode, selected_paths, audio_paths, stream_key, is_shorts, playback_mode, int(repeat_count), duration_hours, log_callback),
-                    daemon=True,
-                )
-                thread.start()
-                time.sleep(0.5)
-                st.success("Streaming dimulai ke YouTube!")
-
-    with col2:
-        if st.button("⏹️ Hentikan Streaming", disabled=not streaming, use_container_width=True):
-            stop_ffmpeg()
-            st.warning("Streaming dihentikan!")
-
-    if FFMPEG_PROCESS is not None and FFMPEG_PROCESS.poll() is None:
-        st.info("🔴 Streaming sedang berjalan...")
-
-    if st.session_state.get("logs"):
-        log_placeholder.text("\n".join(st.session_state["logs"][-20:]))
-
-
-if __name__ == '__main__':
-    main()
+    st.markdown("---")
+    st.subheader("⚙️ Konfigurasi Siaran & Jadwal Otomatis")
+    
+    col_k1, col_k2 = st.columns(2)
+    with col_k1:
