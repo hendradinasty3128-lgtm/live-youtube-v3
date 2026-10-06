@@ -175,7 +175,7 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             log_callback("ERROR: Minimal 1 video diperlukan.")
             return
 
-        playlist = make_concat_playlist(video_paths, 9999) # Infinite loop for scheduled streaming
+        playlist = make_concat_playlist(video_paths, 9999)
         cmd = ["ffmpeg", "-hide_banner", "-re", "-stream_loop", "-1", "-f", "concat", "-safe", "0", "-i", playlist]
 
         cmd += [
@@ -248,7 +248,6 @@ def main():
 
     with st.sidebar:
         st.markdown('<div class="profile-container">', unsafe_allow_html=True)
-        # Menampilkan foto profil Hendra Waskita dari file repository GitHub
         try:
             st.image("DINASTY.jpg.webp", width=80)
         except Exception:
@@ -364,7 +363,6 @@ def main():
         st.markdown("---")
         st.markdown("#### 🕒 Pengaturan Jadwal & Waktu (WIB)")
         
-        # Form Jadwal Mulai
         col_j1, col_j2 = st.columns(2)
         with col_j1:
             sched_date = st.date_input("Tanggal Mulai", value=now_jakarta.date())
@@ -372,7 +370,6 @@ def main():
             sched_time = st.time_input("Jam Mulai", value=now_jakarta.time())
         st.caption("⏰ Waktu akan disimpan dalam timezone: **Jakarta (Asia/Jakarta)**")
 
-        # Form Auto Stop & Durasi
         st.markdown("#### ⏹️ Auto Stop & Durasi Otomatis")
         col_as1, col_as2 = st.columns(2)
         with col_as1:
@@ -381,14 +378,12 @@ def main():
             stop_minutes = st.selectbox("Auto Stop: Pilih Menit", [0, 15, 30, 45], index=0)
         st.caption("Atur durasi auto-stop (Jam dan Menit). Biarkan 0 jika ingin siaran berjalan terus tanpa henti.")
 
-        # Jadwal Stop Opsional
         col_js1, col_js2 = st.columns(2)
         with col_js1:
             stop_date = st.date_input("Tanggal Stop (Opsi)", value=now_jakarta.date())
         with col_js2:
             stop_time = st.time_input("Jam Stop (Opsi)", value=now_jakarta.time())
 
-        # Pengulangan Jadwal
         repeat_schedule = st.selectbox("Pengulangan Jadwal:", ["Jadwal Manual", "Harian (Daily)", "Mingguan (Weekly)"])
         st.caption("Pengulangan hanya tersedia jika Auto Stop atau Jadwal Stop diaktifkan.")
 
@@ -415,13 +410,11 @@ def main():
                 elif not stream_key:
                     st.error("Stream Key wajib diisi!")
                 else:
-                    # Hitung waktu delay mulai
                     target_start_dt = tz_jakarta.localize(datetime.combine(sched_date, sched_time))
                     current_dt = datetime.now(tz_jakarta)
                     start_delay = (target_start_dt - current_dt).total_seconds()
                     start_delay_seconds = max(0, int(start_delay))
 
-                    # Hitung durasi total dalam detik
                     total_duration_seconds = (stop_hours * 3600) + (stop_minutes * 60)
 
                     st.session_state["logs"] = []
@@ -435,9 +428,10 @@ def main():
                     st.success(f"Siaran berhasil dijadwalkan! Akan mulai dalam {start_delay_seconds} detik.")
 
         with col_btn2:
-            if st.button("⏹️ Hentikan Paksa Siaran", disabled=not streaming, use_container_width=True):
+            if st.button("⏹️ Hentikan Paksa Siaran", disabled=False, use_container_width=True):
                 stop_ffmpeg()
-                st.warning("Siaran dihentikan.")
+                st.success("Perintah berhenti dikirim! Siaran dihentikan.")
+                st.rerun()
 
         if streaming:
             st.info("🔴 Status Live: Sedang mengudara...")
