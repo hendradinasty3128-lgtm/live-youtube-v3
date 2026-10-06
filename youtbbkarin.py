@@ -16,6 +16,7 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "streamlit"])
     import streamlit as st
 
+# Install pytz jika belum ada untuk zona waktu Jakarta
 try:
     import pytz
 except ImportError:
@@ -41,7 +42,7 @@ def save_uploaded_file(uploaded_file, slot: int) -> str:
     original = safe_filename(uploaded_file.name)
     stem = Path(original).stem
     suffix = Path(original).suffix.lower()
-    filename = f"video_slot_{slot}_{stem}{suffix}"
+    filename = f"video_{slot}_{stem}{suffix}"
     path = UPLOAD_DIR / filename
     with open(path, "wb") as f:
         f.write(uploaded_file.getbuffer())
@@ -62,10 +63,10 @@ def download_video_from_url(url: str, slot: int, filename_hint: str = "") -> str
             import gdown
         except ImportError as exc:
             raise RuntimeError("Library gdown belum terpasang.") from exc
-        hint = safe_filename(filename_hint or f"video_slot_{slot}.mp4")
+        hint = safe_filename(filename_hint or f"video_{slot}.mp4")
         if not Path(hint).suffix:
             hint += ".mp4"
-        target = UPLOAD_DIR / f"video_slot_{slot}_drive_{hint}"
+        target = UPLOAD_DIR / f"video_{slot}_drive_{hint}"
         result = gdown.download(url=url, output=str(target), quiet=True, fuzzy=True)
         if not result or not target.exists() or target.stat().st_size == 0:
             raise RuntimeError("Google Drive gagal diunduh. Pastikan file disetel 'Anyone with the link'.")
@@ -74,11 +75,11 @@ def download_video_from_url(url: str, slot: int, filename_hint: str = "") -> str
     hint = filename_hint.strip()
     if not hint:
         name = Path(urllib.parse.unquote(parsed.path)).name
-        hint = name or f"video_slot_{slot}.mp4"
+        hint = name or f"video_{slot}.mp4"
     hint = safe_filename(hint)
     if not Path(hint).suffix:
         hint += ".mp4"
-    target = UPLOAD_DIR / f"video_slot_{slot}_link_{hint}"
+    target = UPLOAD_DIR / f"video_{slot}_link_{hint}"
 
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(request, timeout=60) as response, open(target, "wb") as out:
@@ -97,7 +98,7 @@ def save_uploaded_audio(uploaded_file, slot: int) -> str:
     original = safe_filename(uploaded_file.name)
     stem = Path(original).stem
     suffix = Path(original).suffix.lower()
-    filename = f"audio_slot_{slot}_{stem}{suffix}"
+    filename = f"audio_{slot}_{stem}{suffix}"
     path = UPLOAD_DIR / filename
     with open(path, "wb") as f:
         f.write(uploaded_file.getbuffer())
@@ -126,7 +127,7 @@ def make_audio_playlist(audio_paths, repeat_count=1):
     return str(playlist)
 
 
-def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, total_duration_seconds, start_delay_seconds, log_callback):
+def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_mode, repeat_count, total_duration_seconds, start_delay_seconds, log_callback):
     global FFMPEG_PROCESS
 
     if start_delay_seconds > 0:
@@ -137,15 +138,9 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, total_dura
     duration_seconds = total_duration_seconds if total_duration_seconds and total_duration_seconds > 0 else None
 
     if is_shorts:
-        scale_filter = (
-            "scale=720:1280:force_original_aspect_ratio=decrease,"
-            "pad=720:1280:(ow-iw)/2:(oh-ih)/2"
-        )
+        scale_filter = "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2"
     else:
-        scale_filter = (
-            "scale=1280:720:force_original_aspect_ratio=decrease,"
-            "pad=1280:720:(ow-iw)/2:(oh-ih)/2"
-        )
+        scale_filter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
 
     if mode == "Video + MP3 Playlist":
         if not video_paths or not audio_paths:
@@ -180,7 +175,7 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, total_dura
             log_callback("ERROR: Minimal 1 video diperlukan.")
             return
 
-        playlist = make_concat_playlist(video_paths, 9999)
+        playlist = make_concat_playlist(video_paths, 9999) # Infinite loop for scheduled streaming
         cmd = ["ffmpeg", "-hide_banner", "-re", "-stream_loop", "-1", "-f", "concat", "-safe", "0", "-i", playlist]
 
         cmd += [
@@ -232,6 +227,7 @@ def stop_ffmpeg():
 def main():
     st.set_page_config(page_title="Hendra Waskita - YouTube Live Streaming", page_icon="🎬", layout="wide")
 
+    # Custom CSS untuk styling admin panel ungu
     st.markdown("""
         <style>
         [data-testid="stSidebar"] {
@@ -247,65 +243,24 @@ def main():
             border-bottom: 1px solid rgba(255,255,255,0.2);
             margin-bottom: 15px;
         }
-        .clock-box {
-            background-color: rgba(255, 255, 255, 0.15);
-            border-radius: 12px;
-            padding: 10px;
-            text-align: center;
-            margin-top: 10px;
-            margin-bottom: 15px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
         </style>
-
-        <script>
-        function updateClock() {
-            const now = new Date();
-            const optionsTime = { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-            const optionsDate = { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
-            
-            let timeString = new Intl.DateTimeFormat('id-ID', optionsTime).format(now).replace(/:/g, '.');
-            let dateString = new Intl.DateTimeFormat('id-ID', optionsDate).format(now);
-            
-            const clockEl = document.getElementById('live-clock');
-            const dateEl = document.getElementById('live-date');
-            
-            if (clockEl) clockEl.innerText = timeString + ' WIB';
-            if (dateEl) dateEl.innerText = dateString;
-        }
-        setInterval(updateClock, 1000);
-        window.onload = updateClock;
-        </script>
     """, unsafe_allow_html=True)
-
-    days_indo = {"Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu", "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu"}
-    months_indo = {1: "Januari", 2: "Februari", 3: "Maret", 4: "April", 5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus", 9: "September", 10: "Oktober", 11: "November", 12: "Desember"}
-    
-    tz_jakarta = pytz.timezone("Asia/Jakarta")
-    now_jakarta = datetime.now(tz_jakarta)
-    
-    day_name = days_indo.get(now_jakarta.strftime("%A"), now_jakarta.strftime("%A"))
-    formatted_date = f"{day_name}, {now_jakarta.day} {months_indo.get(now_jakarta.month, '')} {now_jakarta.year}"
-    formatted_time = now_jakarta.strftime("%H.%M.%S")
 
     with st.sidebar:
         st.markdown('<div class="profile-container">', unsafe_allow_html=True)
+        # Menampilkan foto profil Hendra Waskita dari file repository GitHub
         try:
             st.image("DINASTY.jpg.webp", width=80)
         except Exception:
             st.image("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=faces", width=80)
-        st.markdown("### YouTube Live Streaming")
-        st.markdown("<p style='font-size: 14px; font-weight: bold; margin-bottom: 2px;'>By Hendra Waskita</p>", unsafe_allow_html=True)
-        st.markdown(f"<p id='live-date' style='font-size: 13px; opacity: 0.9; margin-bottom: 0;'>{formatted_date}</p>", unsafe_allow_html=True)
+        st.markdown("### Hendra Waskita")
+        st.markdown("<p style='font-size: 12px; opacity: 0.8;'>Created by Hendra Waskita</p>", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown(f"""
-            <div class="clock-box">
-                <span id="live-clock" style="font-size: 22px; font-weight: bold; letter-spacing: 1px;">{formatted_time} WIB</span>
-            </div>
-        """, unsafe_allow_html=True)
-
         menu = st.radio("Navigasi Menu", ["📊 Dashboard Utama", "🚀 Buat & Atur Live", "📁 Berkas Video", "⚙️ Pengaturan & Cache"])
+
+    tz_jakarta = pytz.timezone("Asia/Jakarta")
+    now_jakarta = datetime.now(tz_jakarta)
 
     if menu == "📊 Dashboard Utama":
         st.title("📊 Panel Dashboard Live Streaming")
@@ -331,104 +286,70 @@ def main():
             st.text_area("Live Terminal Logs:", "\n".join(st.session_state["logs"][-15:]), height=200)
 
     elif menu == "🚀 Buat & Atur Live":
-        st.title("🚀 Buat & Kelola Siaran Live (Multi-Slot & Penjadwalan)")
+        st.title("🚀 Buat & Kelola Siaran Live (Dengan Penjadwalan)")
         st.markdown("---")
 
-        mode = st.radio("Pilih Format Konten", ["Playlist Video (Multi-File)", "Video + MP3 Playlist"], horizontal=True)
+        mode = st.radio("Pilih Format Konten", ["Playlist 5 Video", "Video + MP3 Playlist"], horizontal=True)
 
-        existing_files = sorted([f.name for f in UPLOAD_DIR.glob("*") if f.suffix.lower() in ['.mp4', '.mkv', '.mov', '.webm', '.mp3']])
-        source_options = ["📁 Pilih dari Berkas Tersimpan", "📤 Upload Perangkat", "🔗 Link Langsung", "🌐 Google Drive"]
-
-        video_paths = []
+        selected_paths = []
         audio_paths = []
 
-        if mode == "Playlist Video (Multi-File)":
-            st.subheader("📁 Manajemen Playlist Video (4 Slot)")
-            for i in range(1, 5):
-                with st.expander(f"Slot Video #{i}", expanded=(i == 1)):
-                    src_type = st.radio(f"Sumber #{i}", source_options, key=f"v_src_{i}", horizontal=True)
-                    path = None
-
-                    if src_type == "📁 Pilih dari Berkas Tersimpan":
-                        video_only = [f for f in existing_files if not f.endswith('.mp3')]
-                        if video_only:
-                            chosen = st.selectbox(f"Pilih file tersimpan #{i}", video_only, key=f"v_chosen_{i}")
-                            if chosen:
-                                path = str(UPLOAD_DIR / chosen)
-                        else:
-                            st.info("Belum ada berkas video tersimpan.")
-                    elif src_type == "📤 Upload Perangkat":
-                        up_f = st.file_uploader(f"File #{i}", type=["mp4", "mkv", "mov", "webm"], key=f"v_up_{i}")
+        if mode == "Playlist 5 Video":
+            st.subheader("📁 Manajemen Playlist Video")
+            for slot in range(1, 6):
+                with st.expander(f"Slot Video #{slot}", expanded=(slot == 1)):
+                    source = st.radio(f"Sumber #{slot}", ["Upload Perangkat", "Link Langsung", "Google Drive"], horizontal=True, key=f"src_{slot}")
+                    if source == "Upload Perangkat":
+                        up_f = st.file_uploader(f"File #{slot}", type=["mp4", "mkv", "mov", "webm"], key=f"up_{slot}")
                         if up_f:
-                            path = save_uploaded_file(up_f, i)
-                            st.success(f"File berhasil diunggah!")
-                    elif src_type == "🔗 Link Langsung":
-                        lnk = st.text_input(f"URL Link Video #{i}", key=f"v_lnk_{i}")
-                        if lnk and st.button(f"Download Link #{i}", key=f"btn_dl_{i}"):
-                            try:
-                                with st.spinner("Sedang mengunduh video..."):
-                                    path = download_video_from_url(lnk, i)
-                                st.success("Berhasil diunduh!")
-                            except Exception as e:
-                                st.error(f"Gagal: {e}")
+                            st.session_state[f"path_{slot}"] = save_uploaded_file(up_f, slot)
+                    elif source == "Link Langsung":
+                        link_v = st.text_input(f"URL #{slot}", key=f"url_{slot}")
+                        if st.button(f"Download Link #{slot}", key=f"btn_url_{slot}") and link_v:
+                            with st.spinner("Mengunduh..."):
+                                st.session_state[f"path_{slot}"] = download_video_from_url(link_v, slot)
                     else:
-                        g_url = st.text_input(f"Link Google Drive #{i}", key=f"v_g_{i}")
-                        if g_url and st.button(f"Download GDrive #{i}", key=f"btn_gd_{i}"):
-                            try:
-                                with st.spinner("Mengunduh dari Google Drive..."):
-                                    path = download_video_from_url(g_url, i)
-                                st.success("Berhasil diunduh!")
-                            except Exception as e:
-                                st.error(f"Gagal: {e}")
+                        g_v = st.text_input(f"Link Drive #{slot}", key=f"drive_{slot}")
+                        if st.button(f"Download Drive #{slot}", key=f"btn_drive_{slot}") and g_v:
+                            with st.spinner("Mengunduh Drive..."):
+                                st.session_state[f"path_{slot}"] = download_video_from_url(g_v, slot)
 
-                    if path and os.path.exists(path):
-                        video_paths.append(path)
+                candidates = sorted(UPLOAD_DIR.glob(f"video_{slot}_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if candidates:
+                    st.session_state[f"path_{slot}"] = str(candidates[0])
+                if st.session_state.get(f"path_{slot}") and Path(st.session_state[f"path_{slot}"]).exists():
+                    selected_paths.append(st.session_state[f"path_{slot}"])
         else:
-            st.subheader("🎵 Video Latar & MP3 Playlist")
-            with st.expander("Pilih Video Latar", expanded=True):
-                v_src = st.radio("Sumber Video Latar", source_options, key="bg_src", horizontal=True)
-                bg_path = None
-                if v_src == "📁 Pilih dari Berkas Tersimpan":
-                    v_only = [f for f in existing_files if not f.endswith('.mp3')]
-                    if v_only:
-                        ch_bg = st.selectbox("Pilih video latar", v_only, key="bg_chosen")
-                        if ch_bg:
-                            bg_path = str(UPLOAD_DIR / ch_bg)
-                elif v_src == "📤 Upload Perangkat":
-                    up_bg = st.file_uploader("Upload Video Latar", type=["mp4", "mkv", "mov"], key="bg_up")
-                    if up_bg:
-                        bg_path = save_uploaded_file(up_bg, 1)
-                elif v_src == "🔗 Link Langsung":
-                    l_bg = st.text_input("URL Video Latar", key="bg_lnk")
-                    if l_bg and st.button("Download Latar"):
-                        bg_path = download_video_from_url(l_bg, 1)
-                else:
-                    g_bg = st.text_input("Link GDrive Video Latar", key="bg_g")
-                    if g_bg and st.button("Download GDrive Latar"):
-                        bg_path = download_video_from_url(g_bg, 1)
+            st.subheader("🎵 Manajemen Background & MP3")
+            v_source = st.radio("Sumber Video Utama", ["Upload Perangkat", "Google Drive"], horizontal=True, key="bg_src")
+            video_saved = None
+            if v_source == "Upload Perangkat":
+                up_v = st.file_uploader("Upload Video", type=["mp4", "mkv", "mov"], key="bg_up")
+                if up_v:
+                    video_saved = save_uploaded_file(up_v, 1)
+            else:
+                d_v = st.text_input("Link Drive Video Latar", key="bg_drive")
+                if st.button("Ambil Video") and d_v:
+                    with st.spinner("Mengambil..."):
+                        video_saved = download_video_from_url(d_v, 1)
 
-                if bg_path and os.path.exists(bg_path):
-                    video_paths.append(bg_path)
+            if video_saved:
+                selected_paths = [video_saved]
+            else:
+                candidates = sorted(UPLOAD_DIR.glob("video_1_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if candidates:
+                    selected_paths = [str(candidates[0])]
 
             st.markdown("---")
-            st.subheader("Manajemen Playlist Audio (MP3)")
-            for i in range(1, 4):
-                with st.expander(f"Slot Audio MP3 #{i}", expanded=(i == 1)):
-                    a_src = st.radio(f"Sumber Audio #{i}", ["📁 Berkas Tersimpan", "📤 Upload MP3"], key=f"a_src_{i}", horizontal=True)
-                    a_path = None
-                    if a_src == "📁 Berkas Tersimpan":
-                        mp3_only = [f for f in existing_files if f.endswith('.mp3')]
-                        if mp3_only:
-                            ch_mp3 = st.selectbox(f"Pilih MP3 #{i}", mp3_only, key=f"a_chosen_{i}")
-                            if ch_mp3:
-                                a_path = str(UPLOAD_DIR / ch_mp3)
-                    else:
-                        up_mp3 = st.file_uploader(f"Upload MP3 #{i}", type=["mp3"], key=f"a_up_{i}")
-                        if up_mp3:
-                            a_path = save_uploaded_audio(up_mp3, i)
-                    
-                    if a_path and os.path.exists(a_path):
-                        audio_paths.append(a_path)
+            for slot in range(1, 6):
+                up_a = st.file_uploader(f"MP3 Slot #{slot}", type=["mp3"], key=f"mp3_{slot}")
+                if up_a:
+                    save_uploaded_audio(up_a, slot)
+
+            for slot in range(1, 6):
+                candidates = sorted(UPLOAD_DIR.glob(f"audio_{slot}_*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if candidates:
+                    audio_paths.append(str(candidates[0]))
 
         st.markdown("---")
         st.subheader("⚙️ Konfigurasi Siaran & Penjadwalan")
@@ -442,18 +363,34 @@ def main():
 
         st.markdown("---")
         st.markdown("#### 🕒 Pengaturan Jadwal & Waktu (WIB)")
+        
+        # Form Jadwal Mulai
         col_j1, col_j2 = st.columns(2)
         with col_j1:
             sched_date = st.date_input("Tanggal Mulai", value=now_jakarta.date())
         with col_j2:
             sched_time = st.time_input("Jam Mulai", value=now_jakarta.time())
+        st.caption("⏰ Waktu akan disimpan dalam timezone: **Jakarta (Asia/Jakarta)**")
 
+        # Form Auto Stop & Durasi
         st.markdown("#### ⏹️ Auto Stop & Durasi Otomatis")
         col_as1, col_as2 = st.columns(2)
         with col_as1:
             stop_hours = st.selectbox("Auto Stop: Pilih Jam", [0, 1, 2, 3, 4, 6, 8, 12, 24], index=0)
         with col_as2:
             stop_minutes = st.selectbox("Auto Stop: Pilih Menit", [0, 15, 30, 45], index=0)
+        st.caption("Atur durasi auto-stop (Jam dan Menit). Biarkan 0 jika ingin siaran berjalan terus tanpa henti.")
+
+        # Jadwal Stop Opsional
+        col_js1, col_js2 = st.columns(2)
+        with col_js1:
+            stop_date = st.date_input("Tanggal Stop (Opsi)", value=now_jakarta.date())
+        with col_js2:
+            stop_time = st.time_input("Jam Stop (Opsi)", value=now_jakarta.time())
+
+        # Pengulangan Jadwal
+        repeat_schedule = st.selectbox("Pengulangan Jadwal:", ["Jadwal Manual", "Harian (Daily)", "Mingguan (Weekly)"])
+        st.caption("Pengulangan hanya tersedia jika Auto Stop atau Jadwal Stop diaktifkan.")
 
         log_placeholder = st.empty()
         logs = st.session_state.get("logs", [])
@@ -471,24 +408,26 @@ def main():
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             if st.button("▶️ Jadwalkan & Mulai Siaran", disabled=streaming, use_container_width=True):
-                if not video_paths:
-                    st.error("Belum ada video yang dipilih/dimasukkan ke slot!")
+                if not selected_paths:
+                    st.error("Video belum siap!")
                 elif mode == "Video + MP3 Playlist" and not audio_paths:
-                    st.error("Belum ada file MP3 yang dipilih!")
+                    st.error("MP3 belum diunggah!")
                 elif not stream_key:
                     st.error("Stream Key wajib diisi!")
                 else:
+                    # Hitung waktu delay mulai
                     target_start_dt = tz_jakarta.localize(datetime.combine(sched_date, sched_time))
                     current_dt = datetime.now(tz_jakarta)
                     start_delay = (target_start_dt - current_dt).total_seconds()
                     start_delay_seconds = max(0, int(start_delay))
 
+                    # Hitung durasi total dalam detik
                     total_duration_seconds = (stop_hours * 3600) + (stop_minutes * 60)
 
                     st.session_state["logs"] = []
                     thread = threading.Thread(
                         target=run_ffmpeg,
-                        args=(mode, video_paths, audio_paths, stream_key, is_shorts, total_duration_seconds, start_delay_seconds, log_callback),
+                        args=(mode, selected_paths, audio_paths, stream_key, is_shorts, None, 1, total_duration_seconds, start_delay_seconds, log_callback),
                         daemon=True,
                     )
                     thread.start()
@@ -508,39 +447,17 @@ def main():
 
     elif menu == "📁 Berkas Video":
         st.title("📁 Daftar Berkas Video & Audio Tersimpan")
-        st.markdown("Semua file yang di-upload atau di-download dari slot manapun akan tersimpan otomatis di sini.")
-        
-        uploaded_files = st.file_uploader("Upload File Baru ke Server", type=["mp4", "mkv", "mov", "webm", "mp3"], accept_multiple_files=True)
-        if uploaded_files:
-            for f in uploaded_files:
-                if f.name.endswith(".mp3"):
-                    save_uploaded_audio(f, 1)
-                else:
-                    save_uploaded_file(f, 1)
-            st.success("File berhasil diunggah!")
-            st.rerun()
-
-        st.markdown("---")
-        st.subheader("Daftar Berkas di Server:")
+        st.markdown("Berikut adalah file-file yang tersimpan di server direktori upload Anda:")
         files = list(UPLOAD_DIR.glob("*"))
         if files:
             for f in files:
-                col_f1, col_f2 = st.columns([4, 1])
-                with col_f1:
-                    st.write(f"📄 **{f.name}** — `{f.stat().st_size // 1024 // 1024} MB`")
-                with col_f2:
-                    if st.button("Hapus", key=f"del_{f.name}"):
-                        try:
-                            f.unlink()
-                            st.rerun()
-                        except Exception:
-                            pass
+                st.write(f"- {f.name} ({f.stat().st_size // 1024 // 1024} MB)")
         else:
-            st.info("Belum ada file tersimpan.")
+            st.info("Belum ada file yang diunggah.")
 
     elif menu == "⚙️ Pengaturan & Cache":
         st.title("⚙️ Pengaturan Sistem")
-        if st.button("🧹 Bersihkan Semua Cache & Berkas"):
+        if st.button("🧹 Bersihkan Cache Upload"):
             for f in UPLOAD_DIR.glob("*"):
                 try:
                     f.unlink()
