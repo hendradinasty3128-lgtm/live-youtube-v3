@@ -6,6 +6,8 @@ import time
 import urllib.request
 import urllib.parse
 from pathlib import Path
+from datetime import datetime
+import pytz
 
 # Install streamlit jika belum ada
 try:
@@ -13,6 +15,13 @@ try:
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "streamlit"])
     import streamlit as st
+
+# Install pytz jika belum ada untuk zona waktu Jakarta
+try:
+    import pytz
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pytz"])
+    import pytz
 
 APP_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = APP_DIR / "uploads"
@@ -118,39 +127,32 @@ def make_audio_playlist(audio_paths, repeat_count=1):
     return str(playlist)
 
 
-def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_mode, repeat_count, duration_hours, video_quality, log_callback):
+def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_mode, repeat_count, total_duration_seconds, start_delay_seconds, log_callback):
     global FFMPEG_PROCESS
 
+    if start_delay_seconds > 0:
+        log_callback(f"⏳ Menunda siaran sesuai jadwal selama {start_delay_seconds} detik...")
+        time.sleep(start_delay_seconds)
+
     output_url = f"rtmp://a.rtmp.youtube.com/live2/{stream_key}"
-    duration_seconds = int(duration_hours * 3600) if playback_mode == "Jadwal Durasi (Jam)" and duration_hours else None
+    duration_seconds = total_duration_seconds if total_duration_seconds and total_duration_seconds > 0 else None
 
     if is_shorts:
         scale_filter = "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2"
     else:
-        if video_quality == "HD 720p (Ringan & Stabil)":
-            scale_filter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
-        else:
-            scale_filter = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+        scale_filter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
 
     if mode == "Video + MP3 Playlist":
         if not video_paths or not audio_paths:
             log_callback("ERROR: Butuh video latar dan file MP3.")
             return
 
-        if playback_mode == "Jumlah Pengulangan":
-            audio_playlist = make_audio_playlist(audio_paths, repeat_count)
-            audio_loop_args = []
-        else:
-            audio_playlist = make_audio_playlist(audio_paths, 1)
-            audio_loop_args = ["-stream_loop", "-1"]
-
+        audio_playlist = make_audio_playlist(audio_paths, 1)
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "info",
             "-thread_queue_size", "512", "-re", "-stream_loop", "-1",
             "-i", video_paths[0], "-thread_queue_size", "512", "-re",
-        ]
-        cmd += audio_loop_args
-        cmd += [
+            "-stream_loop", "-1",
             "-f", "concat", "-safe", "0", "-i", audio_playlist,
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
@@ -165,25 +167,18 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
 
         if duration_seconds:
             cmd += ["-t", str(duration_seconds)]
-        elif playback_mode == "Jumlah Pengulangan":
-            cmd += ["-shortest"]
 
         cmd += ["-flvflags", "no_duration_filesize", "-muxdelay", "0", "-muxpreload", "0", "-f", "flv", output_url]
-        log_callback("🚀 Memulai Streaming Mode: Video + MP3")
+        log_callback("🚀 Memulai Streaming Mode: Video + MP3 (Terjadwal)")
     else:
         if not video_paths:
             log_callback("ERROR: Minimal 1 video diperlukan.")
             return
 
-        playlist_repeat = repeat_count if playback_mode == "Jumlah Pengulangan" else 1
-        playlist = make_concat_playlist(video_paths, playlist_repeat)
-        cmd = ["ffmpeg", "-hide_banner", "-re"]
-
-        if playback_mode == "Tanpa Batas (Looping 24 Jam)":
-            cmd += ["-stream_loop", "-1"]
+        playlist = make_concat_playlist(video_paths, 9999) # Infinite loop for scheduled streaming
+        cmd = ["ffmpeg", "-hide_banner", "-re", "-stream_loop", "-1", "-f", "concat", "-safe", "0", "-i", playlist]
 
         cmd += [
-            "-f", "concat", "-safe", "0", "-i", playlist,
             "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
             "-r", "20", "-pix_fmt", "yuv420p", "-profile:v", "main",
             "-threads", "2", "-b:v", "2500k", "-maxrate", "2500k",
@@ -197,7 +192,7 @@ def run_ffmpeg(mode, video_paths, audio_paths, stream_key, is_shorts, playback_m
             cmd += ["-t", str(duration_seconds)]
 
         cmd += ["-f", "flv", output_url]
-        log_callback("🚀 Memulai Streaming Mode: Playlist 5 Video")
+        log_callback("🚀 Memulai Streaming Mode: Playlist Video (Terjadwal)")
 
     try:
         with PROCESS_LOCK:
@@ -232,7 +227,7 @@ def stop_ffmpeg():
 def main():
     st.set_page_config(page_title="Hendra Waskita - YouTube Live Streaming", page_icon="🎬", layout="wide")
 
-    # Custom CSS untuk styling mirip tema panel admin ungu
+    # Custom CSS untuk styling admin panel ungu
     st.markdown("""
         <style>
         [data-testid="stSidebar"] {
@@ -252,20 +247,25 @@ def main():
     """, unsafe_allow_html=True)
 
     with st.sidebar:
-        # Foto Profil & Branding Creator (bisa diganti URL foto kamu)
         st.markdown('<div class="profile-container">', unsafe_allow_html=True)
-        st.image("DINASTY.jpg.webp", width=80)
+        # Menampilkan foto profil Hendra Waskita dari file repository GitHub
+        try:
+            st.image("DINASTY.jpg.webp", width=80)
+        except Exception:
+            st.image("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=faces", width=80)
         st.markdown("### Hendra Waskita")
         st.markdown("<p style='font-size: 12px; opacity: 0.8;'>Created by Hendra Waskita</p>", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
         menu = st.radio("Navigasi Menu", ["📊 Dashboard Utama", "🚀 Buat & Atur Live", "📁 Berkas Video", "⚙️ Pengaturan & Cache"])
 
+    tz_jakarta = pytz.timezone("Asia/Jakarta")
+    now_jakarta = datetime.now(tz_jakarta)
+
     if menu == "📊 Dashboard Utama":
         st.title("📊 Panel Dashboard Live Streaming")
-        st.markdown("Halo, **Hendra!** Selamat datang kembali di panel kontrol streaming Anda.")
+        st.markdown("Halo, **Hendra Waskita!** Selamat datang kembali di panel kontrol streaming Anda.")
         
-        # Ringkasan Status / Metric Cards
         col1, col2 = st.columns(2)
         streaming = FFMPEG_PROCESS is not None and FFMPEG_PROCESS.poll() is None
         
@@ -286,7 +286,7 @@ def main():
             st.text_area("Live Terminal Logs:", "\n".join(st.session_state["logs"][-15:]), height=200)
 
     elif menu == "🚀 Buat & Atur Live":
-        st.title("🚀 Buat & Kelola Siaran Live")
+        st.title("🚀 Buat & Kelola Siaran Live (Dengan Penjadwalan)")
         st.markdown("---")
 
         mode = st.radio("Pilih Format Konten", ["Playlist 5 Video", "Video + MP3 Playlist"], horizontal=True)
@@ -352,7 +352,7 @@ def main():
                     audio_paths.append(str(candidates[0]))
 
         st.markdown("---")
-        st.subheader("⚙️ Konfigurasi Siaran")
+        st.subheader("⚙️ Konfigurasi Siaran & Penjadwalan")
         
         col_k1, col_k2 = st.columns(2)
         with col_k1:
@@ -360,14 +360,37 @@ def main():
             video_quality = st.selectbox("Kualitas Resolusi", ["HD 720p (Ringan & Stabil)", "Full HD 1080p"])
         with col_k2:
             is_shorts = st.checkbox("Format YouTube Shorts (Vertikal)")
-            playback_mode = st.radio("Mode Putar", ["Tanpa Batas (Looping 24 Jam)", "Jumlah Pengulangan", "Jadwal Durasi (Jam)"])
 
-        repeat_count = 1
-        duration_hours = None
-        if playback_mode == "Jumlah Pengulangan":
-            repeat_count = st.number_input("Total Pengulangan", min_value=1, value=1)
-        elif playback_mode == "Jadwal Durasi (Jam)":
-            duration_hours = st.number_input("Durasi Otomatis (Jam)", min_value=0.1, value=2.0)
+        st.markdown("---")
+        st.markdown("#### 🕒 Pengaturan Jadwal & Waktu (WIB)")
+        
+        # Form Jadwal Mulai
+        col_j1, col_j2 = st.columns(2)
+        with col_j1:
+            sched_date = st.date_input("Tanggal Mulai", value=now_jakarta.date())
+        with col_j2:
+            sched_time = st.time_input("Jam Mulai", value=now_jakarta.time())
+        st.caption("⏰ Waktu akan disimpan dalam timezone: **Jakarta (Asia/Jakarta)**")
+
+        # Form Auto Stop & Durasi
+        st.markdown("#### ⏹️ Auto Stop & Durasi Otomatis")
+        col_as1, col_as2 = st.columns(2)
+        with col_as1:
+            stop_hours = st.selectbox("Auto Stop: Pilih Jam", [0, 1, 2, 3, 4, 6, 8, 12, 24], index=0)
+        with col_as2:
+            stop_minutes = st.selectbox("Auto Stop: Pilih Menit", [0, 15, 30, 45], index=0)
+        st.caption("Atur durasi auto-stop (Jam dan Menit). Biarkan 0 jika ingin siaran berjalan terus tanpa henti.")
+
+        # Jadwal Stop Opsional
+        col_js1, col_js2 = st.columns(2)
+        with col_js1:
+            stop_date = st.date_input("Tanggal Stop (Opsi)", value=now_jakarta.date())
+        with col_js2:
+            stop_time = st.time_input("Jam Stop (Opsi)", value=now_jakarta.time())
+
+        # Pengulangan Jadwal
+        repeat_schedule = st.selectbox("Pengulangan Jadwal:", ["Jadwal Manual", "Harian (Daily)", "Mingguan (Weekly)"])
+        st.caption("Pengulangan hanya tersedia jika Auto Stop atau Jadwal Stop diaktifkan.")
 
         log_placeholder = st.empty()
         logs = st.session_state.get("logs", [])
@@ -384,7 +407,7 @@ def main():
 
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            if st.button("▶️ Mulai Siaran Live Streaming", disabled=streaming, use_container_width=True):
+            if st.button("▶️ Jadwalkan & Mulai Siaran", disabled=streaming, use_container_width=True):
                 if not selected_paths:
                     st.error("Video belum siap!")
                 elif mode == "Video + MP3 Playlist" and not audio_paths:
@@ -392,15 +415,24 @@ def main():
                 elif not stream_key:
                     st.error("Stream Key wajib diisi!")
                 else:
+                    # Hitung waktu delay mulai
+                    target_start_dt = tz_jakarta.localize(datetime.combine(sched_date, sched_time))
+                    current_dt = datetime.now(tz_jakarta)
+                    start_delay = (target_start_dt - current_dt).total_seconds()
+                    start_delay_seconds = max(0, int(start_delay))
+
+                    # Hitung durasi total dalam detik
+                    total_duration_seconds = (stop_hours * 3600) + (stop_minutes * 60)
+
                     st.session_state["logs"] = []
                     thread = threading.Thread(
                         target=run_ffmpeg,
-                        args=(mode, selected_paths, audio_paths, stream_key, is_shorts, playback_mode, int(repeat_count), duration_hours, video_quality, log_callback),
+                        args=(mode, selected_paths, audio_paths, stream_key, is_shorts, None, 1, total_duration_seconds, start_delay_seconds, log_callback),
                         daemon=True,
                     )
                     thread.start()
                     time.sleep(0.5)
-                    st.success("Siaran dimulai!")
+                    st.success(f"Siaran berhasil dijadwalkan! Akan mulai dalam {start_delay_seconds} detik.")
 
         with col_btn2:
             if st.button("⏹️ Hentikan Paksa Siaran", disabled=not streaming, use_container_width=True):
