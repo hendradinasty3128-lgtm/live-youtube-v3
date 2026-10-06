@@ -230,20 +230,3 @@ def stop_ffmpeg():
 
 
 def main():
-    st.set_page_config(page_title="YouTube Live Pro", page_icon="🎬", layout="wide")
-    st.title("🎬 YouTube Live Streaming Automation (Pro Version)")
-    st.markdown("---")
-
-    with st.sidebar:
-        st.header("🛠 Utilitas & Server")
-        if st.button("🧹 Bersihkan Cache Upload"):
-            for f in UPLOAD_DIR.glob("*"):
-                try:
-                    f.unlink()
-                except Exception:
-                    pass
-            st.success("Cache berhasil dibersihkan!")
-
-    mode = st.radio("Pilih Format Konten", ["Playlist 5 Video", "Video + MP3 Playlist"], horizontal=True)
-
-    selected_paths =
